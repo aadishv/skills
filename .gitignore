@@ -1,0 +1,7 @@
+.env
+.env.local
+node_modules
+discord/runtime/state.json
+codex-image
+**/.pi/generated_images
+.DS_Store
