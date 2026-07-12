@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S pnpm dlx tsx
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 type Command = "send" | "queue" | "wait";
 
@@ -48,8 +48,8 @@ const STATE_PATH = new URL("./runtime/state.json", import.meta.url);
 const STATE_DIR = new URL("./runtime/", import.meta.url);
 
 function getEnv(): Env {
-  const token = Bun.env.DISCORD_BOT_TOKEN?.trim();
-  const userId = Bun.env.DISCORD_USER_ID?.trim();
+  const token = process.env.DISCORD_BOT_TOKEN?.trim();
+  const userId = process.env.DISCORD_USER_ID?.trim();
 
   if (!token) {
     throw new Error("Missing DISCORD_BOT_TOKEN in .env");
@@ -63,12 +63,17 @@ function getEnv(): Env {
 }
 
 async function readState(): Promise<State> {
-  const file = Bun.file(STATE_PATH);
-  if (!(await file.exists())) {
+  const contents = await readFile(STATE_PATH, "utf8").catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (contents === null) {
     return {};
   }
 
-  const parsed = JSON.parse(await file.text()) as unknown;
+  const parsed = JSON.parse(contents) as unknown;
   if (!parsed || typeof parsed !== "object") {
     return {};
   }
@@ -78,7 +83,7 @@ async function readState(): Promise<State> {
 
 async function writeState(state: State): Promise<void> {
   await mkdir(STATE_DIR, { recursive: true });
-  await Bun.write(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
+  await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function discordFetch<T>(env: Env, path: string, init?: RequestInit): Promise<T> {
@@ -324,11 +329,11 @@ function parseCommand(args: string[]): Command {
     return command;
   }
 
-  throw new Error("Usage: bun ./discord.ts <send|queue|wait> [options]");
+  throw new Error("Usage: pnpm dlx tsx --env-file=.env ./discord.ts <send|queue|wait> [options]");
 }
 
 async function main(): Promise<void> {
-  const args = Bun.argv.slice(2);
+  const args = process.argv.slice(2);
   const command = parseCommand(args);
   const env = getEnv();
   const state = await readState();
@@ -347,7 +352,7 @@ async function main(): Promise<void> {
   await waitForMessages(env, state, format);
 }
 
-await main().catch((error: unknown) => {
+void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
   process.exit(1);

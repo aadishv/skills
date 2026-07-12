@@ -22,22 +22,22 @@ Only `output_format` is directly exposed to the built-in tool. Flags like `--siz
 ## Command
 
 ```bash
-bun scripts/image-gen.ts --prompt "a brutalist sci-fi poster of Saturn"
+pnpm dlx tsx scripts/image-gen.ts --prompt "a brutalist sci-fi poster of Saturn"
 ```
 
 ## Common examples
 
 ```bash
-bun scripts/image-gen.ts --prompt "a brutalist sci-fi poster of Saturn"
+pnpm dlx tsx scripts/image-gen.ts --prompt "a brutalist sci-fi poster of Saturn"
 
-bun scripts/image-gen.ts \
+pnpm dlx tsx scripts/image-gen.ts \
   --prompt "a brutalist sci-fi poster of Saturn" \
   --size 1536x1024 \
   --quality high \
   --background auto \
   --output-format png
 
-bun scripts/image-gen.ts --prompt "an isometric robot city at dusk" --n 4
+pnpm dlx tsx scripts/image-gen.ts --prompt "an isometric robot city at dusk" --n 4
 ```
 
 ## Workflow guidance

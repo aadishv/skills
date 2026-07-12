@@ -6,6 +6,6 @@
     "strict": true,
     "jsx": "react-jsx",
     "allowJs": false,
-    "types": ["bun-types"]
+    "types": ["node"]
   }
 }

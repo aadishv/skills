@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S pnpm dlx tsx
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
@@ -44,7 +44,7 @@ const DEFAULT_OUT_DIR = join(process.cwd(), ".pi", "generated_images");
 
 function printHelp(): void {
 	console.log(`Usage:
-  bun scripts/image-gen.ts --prompt "a red fox in snowfall"
+  pnpm dlx tsx scripts/image-gen.ts --prompt "a red fox in snowfall"
 
 Auth:
   Reads Codex's stored ChatGPT auth from ~/.codex/auth.json.
@@ -182,7 +182,7 @@ async function saveB64Image(b64: string, filePath: string): Promise<void> {
 }
 
 async function renderWithKittyProtocol(filePath: string, format: OutputFormat): Promise<void> {
-	const bytes = Buffer.from(await Bun.file(filePath).arrayBuffer());
+	const bytes = await readFile(filePath);
 	const fmt = format === "png" ? 100 : format === "jpeg" ? 200 : 500;
 	const payload = bytes.toString("base64");
 	const chunkSize = 4096;
@@ -198,7 +198,7 @@ async function renderWithKittyProtocol(filePath: string, format: OutputFormat): 
 
 async function main(): Promise<void> {
 	const { values, positionals } = parseArgs({
-		args: Bun.argv.slice(2),
+		args: process.argv.slice(2),
 		allowPositionals: true,
 		options: {
 			help: { type: "boolean" },
@@ -319,4 +319,8 @@ async function main(): Promise<void> {
 	}
 }
 
-await main();
+void main().catch((error: unknown) => {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error(`error: ${message}`);
+	process.exit(1);
+});

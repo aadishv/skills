@@ -1,15 +1,17 @@
 import { del, list, put } from '@vercel/blob';
+import { build } from 'esbuild';
 import { config } from 'dotenv';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { extractGitDiffBlocks } from './extract-git-diff-blocks';
 import { resolveGitDiffBlocks, splitFrontmatter } from './resolve-git-diffs';
 
 const INITIAL_DATA_SCRIPT_ID = 'glimpse-initial-data';
 const PLAN_PREFIX = 'shares/plan-';
 
-config({ path: new URL('.env.local', import.meta.url).pathname });
+config({ path: new URL('.env.local', import.meta.url).pathname, quiet: true });
 
 type CliOptions = {
   inputPath: string;
@@ -70,13 +72,13 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith('-')) {
       console.error(`Unknown flag: ${arg}`);
-      console.error('Usage: bun cli.ts [--upload] path/to/walkthrough.md');
+      console.error('Usage: pnpm cli [--upload] path/to/walkthrough.md');
       process.exit(1);
     }
 
     if (inputPath !== undefined) {
       console.error('Specify exactly one walkthrough path');
-      console.error('Usage: bun cli.ts [--upload] path/to/walkthrough.md');
+      console.error('Usage: pnpm cli [--upload] path/to/walkthrough.md');
       process.exit(1);
     }
 
@@ -84,7 +86,7 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (inputPath === undefined) {
-    console.error('Usage: bun cli.ts [--upload] path/to/walkthrough.md');
+    console.error('Usage: pnpm cli [--upload] path/to/walkthrough.md');
     process.exit(1);
   }
 
@@ -171,7 +173,7 @@ async function maybeUploadHtml(html: string, fallbackOutputPath: string) {
 
 const options = parseArgs(process.argv.slice(2));
 const absoluteInputPath = path.resolve(options.inputPath);
-const markdown = await Bun.file(absoluteInputPath).text();
+const markdown = readFileSync(absoluteInputPath, 'utf8');
 const gitDiffBlocks = extractGitDiffBlocks(markdown);
 const { context } = splitFrontmatter(markdown);
 const resolvedBlocks = await resolveGitDiffBlocks(
@@ -180,7 +182,7 @@ const resolvedBlocks = await resolveGitDiffBlocks(
   context,
 );
 
-const root = import.meta.dir;
+const root = path.dirname(fileURLToPath(import.meta.url));
 const outdirs = [path.join(root, '.dist'), path.join(root, '.dist-glimpse')];
 for (const dir of outdirs) {
   rmSync(dir, { recursive: true, force: true });
@@ -194,24 +196,16 @@ const initialDataJson = JSON.stringify({
   resolvedBlocks,
 });
 
-const build = await Bun.build({
-  entrypoints: [path.join(root, 'app.tsx')],
-  outdir,
-  target: 'browser',
+await build({
+  entryPoints: [path.join(root, 'app.tsx')],
+  outfile: path.join(outdir, 'app.js'),
+  bundle: true,
+  platform: 'browser',
+  target: 'esnext',
   format: 'esm',
   splitting: false,
-  sourcemap: 'none',
-  naming: {
-    entry: 'app.js',
-  },
+  sourcemap: false,
 });
-
-if (!build.success) {
-  for (const log of build.logs) {
-    console.error(log.message);
-  }
-  process.exit(1);
-}
 
 const bundledJs = readFileSync(path.join(outdir, 'app.js'), 'utf8');
 const html = buildStandaloneHtml({
