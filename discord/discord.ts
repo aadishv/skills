@@ -2,6 +2,9 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
+const ENV_FILE_URL = new URL("./.env", import.meta.url);
+process.loadEnvFile(ENV_FILE_URL);
+
 type Command = "send" | "queue" | "wait";
 
 type Format = "text" | "json";
