@@ -172,7 +172,7 @@ async function maybeUploadHtml(html: string, fallbackOutputPath: string) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const absoluteInputPath = path.resolve(options.inputPath);
+const absoluteInputPath = path.resolve(process.cwd(), options.inputPath);
 const markdown = readFileSync(absoluteInputPath, 'utf8');
 const gitDiffBlocks = extractGitDiffBlocks(markdown);
 const { context } = splitFrontmatter(markdown);

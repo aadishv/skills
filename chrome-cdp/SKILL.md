@@ -65,3 +65,4 @@ CSS px = screenshot image px / DPR
 - Prefer `snap --compact` over `html` for page structure.
 - Use `type` (not eval) to enter text in cross-origin iframes — `click`/`clickxy` to focus first, then `type`.
 - Chrome shows an "Allow debugging" modal once per tab on first access. A background daemon keeps the session alive so subsequent commands need no further approval. Daemons auto-exit after 20 minutes of inactivity.
+- **Never** run the script with parallel tool calls. These will cause a data race on the Chromium end to present permissions prompts and possibly freeze the user's browser. Run CDP commands sequentially.

@@ -5,13 +5,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { codeToHtml, type BundledLanguage } from "shiki";
 import { load } from "js-yaml";
 import { structuredPatch } from "diff";
 import type { ResolvedDiffBlock } from "./resolve-git-diffs";
 import type { GitDiffBlockSource } from "./extract-git-diff-blocks";
 
 type CodeProps = {
-    inline?: boolean;
     className?: string;
     children?: ReactNode;
 };
@@ -175,6 +175,62 @@ function getDiffBlockIndex(children: ReactNode): number | null {
     const escapedSuffix = DIFF_BLOCK_PLACEHOLDER_SUFFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const match = text.match(new RegExp(`^${escapedPrefix}(\\d+)${escapedSuffix}$`));
     return match ? Number(match[1]) : null;
+}
+
+function ShikiCodeBlock({
+    children,
+    className,
+    mode,
+}: CodeProps & { mode: "light" | "dark" }) {
+    const code = getPlainText(children).replace(/\n$/, "");
+    const language = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1] ?? "text";
+    const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        setHighlightedHtml(null);
+
+        void codeToHtml(code, {
+            lang: language as BundledLanguage,
+            theme: mode === "dark" ? "github-dark" : "github-light",
+            structure: "inline",
+        })
+            .then((html) => {
+                if (!cancelled) setHighlightedHtml(html);
+            })
+            .catch(() => {
+                // Keep the readable plain-text fallback for unknown languages.
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [code, language, mode]);
+
+    const codeStyle = {
+        display: "block",
+        fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+        fontSize: 16,
+        lineHeight: 1.6,
+        color: mode === "dark" ? "#e6edf3" : "#24292f",
+        whiteSpace: "pre" as const,
+    };
+
+    return (
+        <pre
+            style={{
+                margin: "20px 0",
+                padding: "18px 20px",
+                borderRadius: 12,
+                overflowX: "auto",
+                border: `1px solid ${mode === "dark" ? "#30363d" : "#d0d7de"}`,
+            }}
+        >
+            {highlightedHtml === null
+                ? <code style={codeStyle}>{code}</code>
+                : <code style={codeStyle} dangerouslySetInnerHTML={{ __html: highlightedHtml }} />}
+        </pre>
+    );
 }
 
 function GitDiffBlock({
@@ -353,10 +409,11 @@ function FrontmatterCard({
     mode,
 }: {
     frontmatter: FrontmatterData;
-    summary: { fileCount: number; additions: number; deletions: number };
+    summary: { fileCount: number; additions: number; deletions: number } | null;
     mode: "light" | "dark";
 }) {
-    const entries = [...Object.entries(frontmatter), ["diff", summary] as const];
+    const entries = [...Object.entries(frontmatter)];
+    if (summary !== null) entries.push(["diff", summary] as const);
 
     return (
         <section style={{ marginBottom: 24 }}>
@@ -441,7 +498,7 @@ function MarkdownView({
 
     return (
         <>
-            {frontmatter ? <FrontmatterCard frontmatter={frontmatter} summary={diffSummary} mode={mode} /> : null}
+            {frontmatter ? <FrontmatterCard frontmatter={frontmatter} summary={diffSummary.fileCount > 0 ? diffSummary : null} mode={mode} /> : null}
             <Profiler id="MarkdownView" onRender={logReactProfiler}>
                 <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
@@ -510,36 +567,31 @@ function MarkdownView({
                     li({ node: _node, ...props }) {
                         return <li style={{ margin: "6px 0", fontSize: 18 }} {...props} />;
                     },
-                    pre({ node: _node, ...props }) {
-                        return (
-                            <pre
-                                style={{
-                                    margin: "20px 0",
-                                    padding: 16,
-                                    borderRadius: 12,
-                                    overflowX: "auto",
-                                    background: mode === "dark" ? "#0f172a" : "#f8fafc",
-                                    border: `1px solid ${mode === "dark" ? "#1e293b" : "#e2e8f0"}`,
-                                }}
-                                {...props}
-                            />
-                        );
-                    },
-                    code(props: CodeProps) {
-                        const { inline, className, children } = props;
-                        if (!inline) {
-                            return <code className={className}>{children}</code>;
+                    pre({ node: _node, children }) {
+                        if (isValidElement<CodeProps>(children)) {
+                            return (
+                                <ShikiCodeBlock
+                                    className={children.props.className}
+                                    mode={mode}
+                                >
+                                    {children.props.children}
+                                </ShikiCodeBlock>
+                            );
                         }
 
+                        return <pre>{children}</pre>;
+                    },
+                    code({ className, children }: CodeProps) {
                         return (
                             <code
                                 className={className}
                                 style={{
-                                    fontSize: "0.9em",
-                                    padding: "0.15em 0.35em",
-                                    borderRadius: 6,
-                                    background: mode === "dark" ? "#0f172a" : "#f1f5f9",
-                                    border: `1px solid ${mode === "dark" ? "#1e293b" : "#e2e8f0"}`,
+                                    fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+                                    fontSize: "0.82em",
+                                    lineHeight: 1.35,
+                                    padding: "0.1em 0.3em",
+                                    borderRadius: 5,
+                                    border: `1px solid ${mode === "dark" ? "#30363d" : "#d8dee4"}`,
                                 }}
                             >
                                 {children}
@@ -567,6 +619,9 @@ function App() {
             return "unified";
         }
     });
+    const hasDiffs = useMemo(() => {
+        return (data?.resolvedBlocks.length ?? 0) > 0;
+    }, [data]);
     const hasLoggedFirstPaint = useRef(false);
 
     useEffect(() => {
@@ -675,43 +730,46 @@ function App() {
                         marginBottom: 20,
                     }}
                 >
-                    <div
-                        style={{
-                            display: "inline-flex",
-                            border: `1px solid ${mode === "dark" ? "#334155" : "#cbd5e1"}`,
-                            borderRadius: 8,
-                            overflow: "hidden",
-                        }}
-                    >
-                        {(["unified", "split"] as const).map((value, index) => {
-                            const active = diffStyle === value;
-                            return (
-                                <button
-                                    key={value}
-                                    type="button"
-                                    onClick={() => setDiffStyle(value)}
-                                    style={{
-                                        border: "none",
-                                        borderRight: index === 0 ? `1px solid ${mode === "dark" ? "#334155" : "#cbd5e1"}` : "none",
-                                        background: active
-                                            ? (mode === "dark" ? "#111827" : "#e2e8f0")
-                                            : (mode === "dark" ? "#000000" : "#ffffff"),
-                                        color: mode === "dark" ? "#e2e8f0" : "#0f172a",
-                                        padding: "6px 12px",
-                                        font: "inherit",
-                                        cursor: "pointer",
-                                        textTransform: "capitalize",
-                                    }}
-                                >
-                                    {value}
-                                </button>
-                            );
-                        })}
-                    </div>
+                    {hasDiffs &&
+                        <div
+                            style={{
+                                display: "inline-flex",
+                                border: `1px solid ${mode === "dark" ? "#334155" : "#cbd5e1"}`,
+                                borderRadius: 8,
+                                overflow: "hidden",
+                            }}
+                        >
+                            {(["unified", "split"] as const).map((value, index) => {
+                                const active = diffStyle === value;
+                                return (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => setDiffStyle(value)}
+                                        style={{
+                                            border: "none",
+                                            borderRight: index === 0 ? `1px solid ${mode === "dark" ? "#334155" : "#cbd5e1"}` : "none",
+                                            background: active
+                                                ? (mode === "dark" ? "#111827" : "#e2e8f0")
+                                                : (mode === "dark" ? "#000000" : "#ffffff"),
+                                            color: mode === "dark" ? "#e2e8f0" : "#0f172a",
+                                            padding: "6px 12px",
+                                            font: "inherit",
+                                            cursor: "pointer",
+                                            textTransform: "capitalize",
+                                        }}
+                                    >
+                                        {value}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    }
                     <button
                         type="button"
                         onClick={() => setMode(mode === "dark" ? "light" : "dark")}
                         style={{
+                            marginLeft: "auto",
                             border: "1px solid",
                             borderColor: mode === "dark" ? "#334155" : "#cbd5e1",
                             background: mode === "dark" ? "#000000" : "#f8fafc",
