@@ -1,3 +1,2 @@
 allowBuilds:
   esbuild: true
-  glimpseui: true
