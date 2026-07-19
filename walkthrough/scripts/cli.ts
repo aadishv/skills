@@ -21,10 +21,10 @@ function parseArgs(argv: string[]) {
   let upload = false;
   for (const arg of argv) {
     if (arg === "--upload") { upload = true; continue; }
-    if (arg.startsWith("-") || inputPath) throw new Error("Usage: pnpm tsx cli-mdx.ts [--upload] path/to/file.md");
+    if (arg.startsWith("-") || inputPath) throw new Error("Usage: pnpm tsx cli.ts [--upload] path/to/file.md");
     inputPath = arg;
   }
-  if (!inputPath) throw new Error("Usage: pnpm tsx cli-mdx.ts [--upload] path/to/file.md");
+  if (!inputPath) throw new Error("Usage: pnpm tsx cli.ts [--upload] path/to/file.md");
   return { inputPath, upload };
 }
 
@@ -83,7 +83,7 @@ async function prehighlightCodeBlocks(markdown: string) {
 async function toMdx(markdown: string, blocks: ResolvedDiffBlock[], frontmatter: Frontmatter | null) {
   let index = 0;
   const body = (await prehighlightCodeBlocks(markdown)).replace(/```git-diff[^\n]*\n[\s\S]*?\n```/g, () => {
-    const data = escapeMdxJson(blocks[index]);
+    const data = escapeMdxJson(JSON.stringify(blocks[index]));
     return `\n\n<GitDiff data={${data}} blockIndex={${index++}} />\n\n`;
   });
   const card = frontmatter ? `<FrontmatterCard data={${escapeMdxJson(frontmatter)}} summary={${escapeMdxJson(summary(blocks))}} />\n\n` : "";
