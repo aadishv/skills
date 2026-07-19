@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cli": "tsx cli.ts"
+    "cli": "tsx cli.ts",
+    "test": "tsx --test resolve-git-diffs.test.ts"
   },
   "dependencies": {
     "@pierre/diffs": "^1.1.12",
