@@ -38,14 +38,19 @@ const css = `
   .code-block pre.shiki code { display: block; font-family: SFMono-Regular, Consolas, monospace; font-size: 16px; line-height: 1.6; white-space: pre; }
   .code-block .shiki, .code-block .shiki span { background-color: transparent !important; }
   .walkthrough.dark .code-block .shiki, .walkthrough.dark .code-block .shiki span { color: var(--shiki-dark) !important; }
+  .diff-file { content-visibility: auto; contain-intrinsic-size: auto 320px; }
 `;
 
-function GitDiff({ data, blockIndex, mode, diffStyle }: { data: string; blockIndex: number; mode: "light" | "dark"; diffStyle: "unified" | "split" }) {
-  const block = useMemo(() => JSON.parse(data) as DiffBlock, [data]);
+function GitDiff({ blockIndex, mode, diffStyle }: { blockIndex: number; mode: "light" | "dark"; diffStyle: "unified" | "split" }) {
+  const block = useMemo(() => {
+    const data = document.getElementById(`walkthrough-diff-${blockIndex}`)?.textContent;
+    if (!data) throw new Error(`Missing data for diff block ${blockIndex}.`);
+    return JSON.parse(data) as DiffBlock;
+  }, [blockIndex]);
   const storageKey = `diff-walkthrough:viewed:${window.location.pathname}:${blockIndex}`;
   const [viewed, setViewed] = useState<Record<number, boolean>>(() => { try { return JSON.parse(localStorage.getItem(storageKey) ?? "{}"); } catch { return {}; } });
   useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(viewed)); } catch {} }, [storageKey, viewed]);
-  return <section style={{ margin: "24px 0" }}>{block.files.map((file, index) => <div key={`${file.newFile.name}-${index}`} style={{ marginBottom: 20 }}><MultiFileDiff oldFile={file.oldFile} newFile={file.newFile} renderHeaderMetadata={() => <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}><input type="checkbox" checked={viewed[index] ?? false} onChange={(event) => setViewed((state) => ({ ...state, [index]: event.target.checked }))} />Viewed</label>} options={{ collapsed: viewed[index] ?? false, theme: { dark: mode === "dark" ? "pierre-dark" : "pierre-light", light: mode === "dark" ? "pierre-dark" : "pierre-light" }, diffStyle, overflow: "wrap", expansionLineCount: 20 }} /></div>)}</section>;
+  return <section style={{ margin: "24px 0" }}>{block.files.map((file, index) => <div className="diff-file" key={`${file.newFile.name}-${index}`} style={{ marginBottom: 20 }}><MultiFileDiff oldFile={file.oldFile} newFile={file.newFile} renderHeaderMetadata={() => <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}><input type="checkbox" checked={viewed[index] ?? false} onChange={(event) => setViewed((state) => ({ ...state, [index]: event.target.checked }))} />Viewed</label>} options={{ collapsed: viewed[index] ?? false, theme: { dark: mode === "dark" ? "pierre-dark" : "pierre-light", light: mode === "dark" ? "pierre-dark" : "pierre-light" }, diffStyle, overflow: "wrap", expansionLineCount: 20 }} /></div>)}</section>;
 }
 
 function value(item: unknown) { return typeof item === "object" && item !== null ? JSON.stringify(item) : String(item); }
@@ -59,7 +64,7 @@ function App() {
   const [mode, setMode] = useState<"light" | "dark">("light");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">(() => localStorage.getItem(DIFF_STYLE_STORAGE_KEY) === "split" ? "split" : "unified");
   useEffect(() => { localStorage.setItem(DIFF_STYLE_STORAGE_KEY, diffStyle); }, [diffStyle]);
-  const components = { GitDiff: (props: { data: string; blockIndex: number }) => <GitDiff {...props} mode={mode} diffStyle={diffStyle} />, FrontmatterCard };
+  const components = { GitDiff: (props: { blockIndex: number }) => <GitDiff {...props} mode={mode} diffStyle={diffStyle} />, FrontmatterCard };
   return <main className={`walkthrough ${mode === "dark" ? "dark" : ""}`}><style>{css}</style><div className="toolbar">{hasDiffs ? <div className="diff-style">{(["unified", "split"] as const).map((style) => <button className={diffStyle === style ? "active" : ""} key={style} onClick={() => setDiffStyle(style)}>{style}</button>)}</div> : null}<button style={{ marginLeft: "auto" }} onClick={() => setMode(mode === "dark" ? "light" : "dark")}>{mode === "dark" ? "Dark" : "Light"}</button></div><article className="markdown-content"><Content components={components} /></article></main>;
 }
 

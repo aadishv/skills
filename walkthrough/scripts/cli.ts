@@ -83,16 +83,19 @@ async function prehighlightCodeBlocks(markdown: string) {
 async function toMdx(markdown: string, blocks: ResolvedDiffBlock[], frontmatter: Frontmatter | null) {
   let index = 0;
   const body = (await prehighlightCodeBlocks(markdown)).replace(/```git-diff[^\n]*\n[\s\S]*?\n```/g, () => {
-    const data = escapeMdxJson(JSON.stringify(blocks[index]));
-    return `\n\n<GitDiff data={${data}} blockIndex={${index++}} />\n\n`;
+    return `\n\n<GitDiff blockIndex={${index++}} />\n\n`;
   });
   const card = frontmatter ? `<FrontmatterCard data={${escapeMdxJson(frontmatter)}} summary={${escapeMdxJson(summary(blocks))}} />\n\n` : "";
   // Leave YAML in place: Sätteri consumes it as frontmatter and excludes it from MDX output.
   return body.replace(/^(---\n[\s\S]*?\n---\n?)/, "$1" + card);
 }
 
-function standaloneHtml(title: string, bundledJs: string) {
-  return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${title.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</title></head><body><div id="root"></div><script type="module" src="data:text/javascript;base64,${Buffer.from(bundledJs).toString("base64")}"></script></body></html>`;
+function standaloneHtml(title: string, bundledJs: string, diffBlocks: ResolvedDiffBlock[]) {
+  const inlineJs = bundledJs.replace(/<\/script/giu, "<\\/script");
+  const diffData = diffBlocks.map((block, index) =>
+    `<script id="walkthrough-diff-${index}" type="application/json">${JSON.stringify(block).replaceAll("<", "\\u003c")}</script>`
+  ).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${title.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</title></head><body>${diffData}<div id="root"></div><script type="module">${inlineJs}</script></body></html>`;
 }
 
 async function publish(html: string, fallback: string) {
@@ -137,6 +140,6 @@ rmSync(outdir, { recursive: true, force: true }); mkdirSync(outdir, { recursive:
 writeFileSync(path.join(outdir, "content.mjs"), result.code);
 writeFileSync(path.join(outdir, "content-meta.mjs"), `export const hasDiffs = ${blocks.length > 0};\n`);
 await build({ entryPoints: [path.join(root, "app.tsx")], outfile: path.join(outdir, "app.js"), bundle: true, platform: "browser", target: "esnext", format: "esm", splitting: false, sourcemap: false, minify: true, define: { "process.env.NODE_ENV": "\"production\"" } });
-const html = standaloneHtml(path.basename(input), readFileSync(path.join(outdir, "app.js"), "utf8"));
+const html = standaloneHtml(path.basename(input), readFileSync(path.join(outdir, "app.js"), "utf8"), blocks);
 const output = path.join("/tmp", `${randomUUID()}.html`); writeFileSync(output, html); rmSync(outdir, { recursive: true, force: true });
 console.log(options.upload ? await publish(html, output) : output);
