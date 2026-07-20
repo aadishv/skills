@@ -1,0 +1,607 @@
+import { spawnSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const DEFAULT_BRIDGE_PORT = 32123;
+const DEFAULT_TIMEOUT = 15_000;
+const DEFAULT_NAVIGATION_TIMEOUT = 30_000;
+
+type CdpId = number;
+type JsonObject = Record<string, unknown>;
+type MessageListener = (params: JsonObject, message: CdpEvent) => void;
+
+interface CdpResponse {
+  id: CdpId;
+  result?: JsonObject;
+  error?: { code?: number; message?: string; data?: unknown };
+  sessionId?: string;
+}
+
+interface CdpEvent {
+  method: string;
+  params?: JsonObject;
+  sessionId?: string;
+}
+
+interface BridgeHello {
+  type: "hello";
+  role: "sdk";
+  token: string;
+  protocolVersion: 1;
+}
+
+interface BridgeControl {
+  type: "hello" | "status" | "keepalive";
+  ok?: boolean;
+  error?: string;
+  extensionConnected?: boolean;
+}
+
+export interface TargetInfo {
+  targetId: string;
+  type: string;
+  title: string;
+  url: string;
+  attached?: boolean;
+  browserContextId?: string;
+}
+
+export interface ConnectBrowserOptions {
+  /** auto prefers an explicitly configured CDP endpoint, then the extension. */
+  backend?: "auto" | "extension" | "cdp";
+  /** Browser CDP WebSocket URL or an HTTP base URL exposing /json/version. */
+  cdpUrl?: string;
+  cdpHost?: string;
+  cdpPort?: number;
+  bridgeUrl?: string;
+  bridgeToken?: string;
+  timeoutMs?: number;
+  autoStartBridge?: boolean;
+}
+
+export interface SnapshotOptions {
+  compact?: boolean;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+function envNumber(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 65_535) {
+    throw new Error(`${name} must be an integer from 1 to 65535`);
+  }
+  return value;
+}
+
+function defaultBridgeUrl(): string {
+  const port = envNumber("BROWSER_BRIDGE_PORT") ?? DEFAULT_BRIDGE_PORT;
+  return `ws://127.0.0.1:${port}`;
+}
+
+function configPath(): string {
+  return process.env.CODEX_BROWSER_CONFIG ?? resolve(homedir(), ".agents/skills/codex-browser-use/.bridge.json");
+}
+
+async function readBridgeToken(): Promise<string> {
+  if (process.env.CODEX_BROWSER_TOKEN) return process.env.CODEX_BROWSER_TOKEN;
+  try {
+    const contents = await import("node:fs/promises").then(({ readFile }) => readFile(configPath(), "utf8"));
+    const parsed = JSON.parse(contents) as { token?: unknown };
+    if (typeof parsed.token === "string" && parsed.token.length >= 32) return parsed.token;
+  } catch {
+    // The setup error below is more actionable than the underlying read/parse error.
+  }
+  throw new Error(
+    `Browser bridge is not configured. Run: node ${resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/bridge.mjs")} setup`,
+  );
+}
+
+function ensureBridgeStarted(): void {
+  const script = resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/bridge.mjs");
+  const result = spawnSync(process.execPath, [script, "start"], {
+    encoding: "utf8",
+    env: process.env,
+    timeout: 8_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || "Failed to start browser bridge").trim());
+  }
+}
+
+async function resolveCdpWebSocketUrl(url: string): Promise<string> {
+  if (url.startsWith("ws://") || url.startsWith("wss://")) return url;
+  const base = new URL(url);
+  if (base.protocol !== "http:" && base.protocol !== "https:") {
+    throw new Error(`Unsupported CDP URL protocol: ${base.protocol}`);
+  }
+  const endpoint = new URL("/json/version", base);
+  const response = await fetch(endpoint);
+  if (!response.ok) throw new Error(`CDP discovery failed: ${response.status} ${response.statusText}`);
+  const body = (await response.json()) as { webSocketDebuggerUrl?: unknown };
+  if (typeof body.webSocketDebuggerUrl !== "string") {
+    throw new Error(`CDP discovery response from ${endpoint} did not include webSocketDebuggerUrl`);
+  }
+  return body.webSocketDebuggerUrl;
+}
+
+class CdpConnection {
+  readonly backend: "extension" | "cdp";
+  readonly #url: string;
+  readonly #timeoutMs: number;
+  readonly #hello?: BridgeHello;
+  #ws?: WebSocket;
+  #nextId = 0;
+  #pending = new Map<number, {
+    method: string;
+    timer: ReturnType<typeof setTimeout>;
+    resolve: (result: JsonObject) => void;
+    reject: (error: Error) => void;
+  }>();
+  #listeners = new Map<string, Set<MessageListener>>();
+  #openPromise?: Promise<void>;
+  #helloResolve?: () => void;
+  #helloReject?: (error: Error) => void;
+  #extensionResolve?: () => void;
+  #extensionReady = false;
+  #closed = false;
+
+  constructor(url: string, backend: "extension" | "cdp", timeoutMs: number, hello?: BridgeHello) {
+    this.#url = url;
+    this.backend = backend;
+    this.#timeoutMs = timeoutMs;
+    this.#hello = hello;
+  }
+
+  async connect(): Promise<void> {
+    if (this.#openPromise) return this.#openPromise;
+    this.#openPromise = new Promise<void>((resolvePromise, rejectPromise) => {
+      const ws = new WebSocket(this.#url);
+      this.#ws = ws;
+      let opened = false;
+      const timer = setTimeout(() => {
+        if (!opened) {
+          ws.close();
+          rejectPromise(new Error(`Timed out connecting to ${this.#url}`));
+        }
+      }, this.#timeoutMs);
+
+      ws.addEventListener("open", () => {
+        opened = true;
+        clearTimeout(timer);
+        if (!this.#hello) {
+          this.#extensionReady = true;
+          resolvePromise();
+          return;
+        }
+        const helloPromise = new Promise<void>((helloResolve, helloReject) => {
+          this.#helloResolve = helloResolve;
+          this.#helloReject = helloReject;
+        });
+        ws.send(JSON.stringify(this.#hello));
+        helloPromise.then(resolvePromise, rejectPromise);
+      });
+
+      ws.addEventListener("message", (event) => this.#handleMessage(String(event.data)));
+      ws.addEventListener("error", () => {
+        if (!opened) {
+          clearTimeout(timer);
+          rejectPromise(new Error(`Could not connect to ${this.#url}`));
+        }
+      });
+      ws.addEventListener("close", () => {
+        this.#closed = true;
+        this.#rejectAll(new Error(`CDP connection to ${this.#url} closed`));
+      });
+    });
+    return this.#openPromise;
+  }
+
+  async waitForExtension(timeoutMs = this.#timeoutMs): Promise<void> {
+    if (this.backend !== "extension" || this.#extensionReady) return;
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      this.#extensionResolve = resolvePromise;
+      const timer = setTimeout(() => {
+        if (this.#extensionResolve === resolvePromise) this.#extensionResolve = undefined;
+        rejectPromise(
+          new Error(
+            "Chrome extension is not connected. Confirm the bridge URL/token in the extension options, then click the extension icon to wake it.",
+          ),
+        );
+      }, timeoutMs);
+      const wrappedResolve = () => {
+        clearTimeout(timer);
+        resolvePromise();
+      };
+      this.#extensionResolve = wrappedResolve;
+    });
+  }
+
+  async send<T extends JsonObject = JsonObject>(method: string, params: JsonObject = {}, sessionId?: string): Promise<T> {
+    await this.connect();
+    await this.waitForExtension();
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN || this.#closed) {
+      throw new Error("CDP connection is not open");
+    }
+    const id = ++this.#nextId;
+    return new Promise<T>((resolvePromise, rejectPromise) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        rejectPromise(new Error(`Timed out waiting for CDP method ${method}`));
+      }, this.#timeoutMs);
+      this.#pending.set(id, {
+        method,
+        timer,
+        resolve: (result) => resolvePromise(result as T),
+        reject: rejectPromise,
+      });
+      this.#ws!.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    });
+  }
+
+  on(method: string, listener: MessageListener): () => void {
+    const listeners = this.#listeners.get(method) ?? new Set<MessageListener>();
+    listeners.add(listener);
+    this.#listeners.set(method, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.#listeners.delete(method);
+    };
+  }
+
+  waitForEvent(method: string, options: { sessionId?: string; timeoutMs?: number } = {}): Promise<JsonObject> {
+    const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
+    return new Promise((resolvePromise, rejectPromise) => {
+      let off = () => {};
+      const timer = setTimeout(() => {
+        off();
+        rejectPromise(new Error(`Timed out waiting for CDP event ${method}`));
+      }, timeoutMs);
+      off = this.on(method, (params, message) => {
+        if (options.sessionId && message.sessionId !== options.sessionId) return;
+        clearTimeout(timer);
+        off();
+        resolvePromise(params);
+      });
+    });
+  }
+
+  close(): void {
+    this.#closed = true;
+    this.#ws?.close();
+    this.#rejectAll(new Error("CDP connection closed"));
+  }
+
+  #handleMessage(raw: string): void {
+    let message: CdpResponse | CdpEvent | BridgeControl;
+    try {
+      message = JSON.parse(raw) as CdpResponse | CdpEvent | BridgeControl;
+    } catch {
+      return;
+    }
+
+    if ("type" in message) {
+      if (message.type === "hello") {
+        if (message.ok === false) {
+          this.#helloReject?.(new Error(message.error ?? "Browser bridge rejected the SDK connection"));
+        } else {
+          this.#extensionReady = message.extensionConnected === true;
+          this.#helloResolve?.();
+          if (this.#extensionReady) this.#extensionResolve?.();
+        }
+        this.#helloResolve = undefined;
+        this.#helloReject = undefined;
+      } else if (message.type === "status") {
+        this.#extensionReady = message.extensionConnected === true;
+        if (this.#extensionReady) {
+          this.#extensionResolve?.();
+          this.#extensionResolve = undefined;
+        } else {
+          this.#rejectAll(new Error("Chrome extension disconnected from the browser bridge"));
+        }
+      }
+      return;
+    }
+
+    if ("id" in message) {
+      const pending = this.#pending.get(message.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.#pending.delete(message.id);
+      if (message.error) {
+        const suffix = message.error.code === undefined ? "" : ` (${message.error.code})`;
+        pending.reject(new Error(`${pending.method}: ${message.error.message ?? "CDP error"}${suffix}`));
+      } else {
+        pending.resolve(message.result ?? {});
+      }
+      return;
+    }
+
+    if ("method" in message) {
+      for (const listener of this.#listeners.get(message.method) ?? []) {
+        listener(message.params ?? {}, message);
+      }
+    }
+  }
+
+  #rejectAll(error: Error): void {
+    for (const pending of this.#pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.#pending.clear();
+  }
+}
+
+export class Browser {
+  readonly backend: "extension" | "cdp";
+  readonly #connection: CdpConnection;
+  readonly #sessions = new Map<string, string>();
+
+  constructor(connection: CdpConnection) {
+    this.#connection = connection;
+    this.backend = connection.backend;
+  }
+
+  /** Sends a browser-level CDP command. */
+  send<T extends JsonObject = JsonObject>(method: string, params: JsonObject = {}): Promise<T> {
+    return this.#connection.send<T>(method, params);
+  }
+
+  async tabs(): Promise<TargetInfo[]> {
+    const { targetInfos } = await this.send<{ targetInfos: TargetInfo[] }>("Target.getTargets");
+    return targetInfos.filter(
+      (target) =>
+        typeof target.targetId === "string" &&
+        target.type === "page" &&
+        !target.url.startsWith("chrome://") &&
+        !target.url.startsWith("chrome-extension://"),
+    );
+  }
+
+  async newPage(url = "about:blank"): Promise<Page> {
+    const { targetId } = await this.send<{ targetId: string }>("Target.createTarget", { url });
+    return this.page(targetId);
+  }
+
+  async page(targetIdOrPrefix: string): Promise<Page> {
+    const tabs = await this.tabs();
+    const exact = tabs.find((tab) => tab.targetId === targetIdOrPrefix);
+    const matches = exact ? [exact] : tabs.filter((tab) => tab.targetId.startsWith(targetIdOrPrefix));
+    if (matches.length === 0) throw new Error(`No page target matches ${targetIdOrPrefix}`);
+    if (matches.length > 1) throw new Error(`Page target prefix ${targetIdOrPrefix} is ambiguous`);
+    const target = matches[0]!;
+    let sessionId = this.#sessions.get(target.targetId);
+    if (!sessionId) {
+      const attached = await this.send<{ sessionId: string }>("Target.attachToTarget", {
+        targetId: target.targetId,
+        flatten: true,
+      });
+      sessionId = attached.sessionId;
+      this.#sessions.set(target.targetId, sessionId);
+    }
+    return new Page(this.#connection, target.targetId, sessionId);
+  }
+
+  async close(): Promise<void> {
+    await Promise.allSettled(
+      [...this.#sessions.values()].map((sessionId) =>
+        this.send("Target.detachFromTarget", { sessionId }),
+      ),
+    );
+    this.#sessions.clear();
+    this.#connection.close();
+  }
+}
+
+export class Page {
+  readonly targetId: string;
+  readonly sessionId: string;
+  readonly #connection: CdpConnection;
+
+  constructor(connection: CdpConnection, targetId: string, sessionId: string) {
+    this.#connection = connection;
+    this.targetId = targetId;
+    this.sessionId = sessionId;
+  }
+
+  /** Sends an exact target-session CDP command. */
+  send<T extends JsonObject = JsonObject>(method: string, params: JsonObject = {}): Promise<T> {
+    return this.#connection.send<T>(method, params, this.sessionId);
+  }
+
+  on(method: string, listener: (params: JsonObject) => void): () => void {
+    return this.#connection.on(method, (params, message) => {
+      if (message.sessionId === this.sessionId) listener(params);
+    });
+  }
+
+  async goto(url: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    const parsed = new URL(url);
+    if (!["http:", "https:", "file:"].includes(parsed.protocol)) {
+      throw new Error(`Unsupported navigation protocol: ${parsed.protocol}`);
+    }
+    await this.send("Page.enable");
+    const result = await this.send<{ errorText?: string }>("Page.navigate", { url });
+    if (result.errorText) throw new Error(result.errorText);
+    const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT);
+    while (Date.now() < deadline) {
+      try {
+        if ((await this.evaluate<string>("document.readyState")) === "complete") return;
+      } catch {
+        // Execution contexts are briefly unavailable during navigation.
+      }
+      await sleep(150);
+    }
+    throw new Error(`Timed out waiting for ${url} to finish loading`);
+  }
+
+  async evaluate<T = unknown>(expression: string | ((...args: any[]) => unknown), ...args: unknown[]): Promise<T> {
+    const source =
+      typeof expression === "function"
+        // Transpilers such as esbuild/tsx may insert __name(...) calls into a
+        // function's source. Provide a harmless local shim when serializing it
+        // for execution in the page.
+        ? `(() => { const __name = (target) => target; return (${expression.toString()})(...${JSON.stringify(args)}); })()`
+        : expression;
+    await this.send("Runtime.enable");
+    const response = await this.send<{
+      result: { value?: T; unserializableValue?: string; description?: string };
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    }>("Runtime.evaluate", {
+      expression: source,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    });
+    if (response.exceptionDetails) {
+      throw new Error(
+        response.exceptionDetails.exception?.description ?? response.exceptionDetails.text ?? "Browser evaluation failed",
+      );
+    }
+    if (response.result.unserializableValue !== undefined) {
+      return response.result.unserializableValue as T;
+    }
+    return response.result.value as T;
+  }
+
+  title(): Promise<string> {
+    return this.evaluate<string>("document.title");
+  }
+
+  url(): Promise<string> {
+    return this.evaluate<string>("location.href");
+  }
+
+  async content(selector?: string): Promise<string> {
+    return this.evaluate<string>(
+      selector
+        ? `document.querySelector(${JSON.stringify(selector)})?.outerHTML ?? ""`
+        : "document.documentElement.outerHTML",
+    );
+  }
+
+  async screenshot(path?: string): Promise<Buffer> {
+    const { data } = await this.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+    const buffer = Buffer.from(data, "base64");
+    if (path) await writeFile(path, buffer);
+    return buffer;
+  }
+
+  locator(selector: string): Locator {
+    return new Locator(this, selector);
+  }
+
+  async accessibilitySnapshot(options: SnapshotOptions = {}): Promise<string> {
+    await this.send("Accessibility.enable");
+    const { nodes } = await this.send<{ nodes: Array<{
+      nodeId: string;
+      parentId?: string;
+      ignored?: boolean;
+      role?: { value?: string };
+      name?: { value?: string };
+      value?: { value?: unknown };
+    }> }>("Accessibility.getFullAXTree");
+    const byParent = new Map<string | undefined, typeof nodes>();
+    for (const node of nodes) {
+      const siblings = byParent.get(node.parentId) ?? [];
+      siblings.push(node);
+      byParent.set(node.parentId, siblings);
+    }
+    const lines: string[] = [];
+    const visited = new Set<string>();
+    const visit = (node: (typeof nodes)[number], depth: number) => {
+      if (visited.has(node.nodeId)) return;
+      visited.add(node.nodeId);
+      const role = node.role?.value ?? "";
+      const name = node.name?.value ?? "";
+      const value = node.value?.value;
+      const hidden = node.ignored || (options.compact && ["none", "generic", "InlineTextBox"].includes(role));
+      if (!hidden && (role || name || value !== undefined)) {
+        const renderedValue = value === undefined || value === "" ? "" : ` = ${JSON.stringify(value)}`;
+        lines.push(`${"  ".repeat(Math.min(depth, 12))}[${role || "node"}]${name ? ` ${name}` : ""}${renderedValue}`);
+      }
+      for (const child of byParent.get(node.nodeId) ?? []) visit(child, depth + 1);
+    };
+    for (const root of nodes.filter((node) => !node.parentId || !nodes.some((candidate) => candidate.nodeId === node.parentId))) {
+      visit(root, 0);
+    }
+    for (const node of nodes) visit(node, 0);
+    return lines.join("\n");
+  }
+
+  async close(): Promise<void> {
+    await this.#connection.send("Target.closeTarget", { targetId: this.targetId });
+  }
+}
+
+export class Locator {
+  readonly #page: Page;
+  readonly selector: string;
+
+  constructor(page: Page, selector: string) {
+    this.#page = page;
+    this.selector = selector;
+  }
+
+  async text(): Promise<string> {
+    return this.#page.evaluate<string>(
+      `(() => { const el = document.querySelector(${JSON.stringify(this.selector)}); if (!el) throw new Error("Element not found: ${this.selector.replaceAll('"', '\\"')}"); return el.textContent ?? ""; })()`,
+    );
+  }
+
+  async click(): Promise<void> {
+    const rect = await this.#page.evaluate<{ x: number; y: number }>(
+      `(() => { const el = document.querySelector(${JSON.stringify(this.selector)}); if (!el) throw new Error("Element not found"); el.scrollIntoView({block:"center", inline:"center"}); const r = el.getBoundingClientRect(); return {x:r.left+r.width/2, y:r.top+r.height/2}; })()`,
+    );
+    const base = { x: rect.x, y: rect.y, button: "left", clickCount: 1 };
+    await this.#page.send("Input.dispatchMouseEvent", { ...base, type: "mouseMoved" });
+    await this.#page.send("Input.dispatchMouseEvent", { ...base, type: "mousePressed" });
+    await this.#page.send("Input.dispatchMouseEvent", { ...base, type: "mouseReleased" });
+  }
+
+  async fill(value: string): Promise<void> {
+    await this.#page.evaluate(
+      `(() => { const el = document.querySelector(${JSON.stringify(this.selector)}); if (!el) throw new Error("Element not found"); el.focus(); if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) { el.value = ""; el.dispatchEvent(new Event("input", {bubbles:true})); } else if (el instanceof HTMLElement && el.isContentEditable) { el.textContent = ""; } else { throw new Error("Element is not editable"); } })()`,
+    );
+    await this.#page.send("Input.insertText", { text: value });
+  }
+}
+
+export async function connectBrowser(options: ConnectBrowserOptions = {}): Promise<Browser> {
+  const backend = options.backend ?? (process.env.BROWSER_BACKEND as ConnectBrowserOptions["backend"] | undefined) ?? "auto";
+  const cdpPort = options.cdpPort ?? envNumber("CDP_PORT");
+  const configuredCdpUrl = options.cdpUrl ?? process.env.CDP_URL ?? (cdpPort ? `http://${options.cdpHost ?? process.env.CDP_HOST ?? "127.0.0.1"}:${cdpPort}` : undefined);
+  const useCdp = backend === "cdp" || (backend === "auto" && configuredCdpUrl !== undefined);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT;
+
+  if (useCdp) {
+    if (!configuredCdpUrl) throw new Error("CDP backend selected but neither cdpUrl, CDP_URL, nor CDP_PORT is set");
+    const wsUrl = await resolveCdpWebSocketUrl(configuredCdpUrl);
+    const connection = new CdpConnection(wsUrl, "cdp", timeoutMs);
+    await connection.connect();
+    return new Browser(connection);
+  }
+
+  if (backend !== "auto" && backend !== "extension") {
+    throw new Error(`Unknown browser backend: ${String(backend)}`);
+  }
+  if (options.autoStartBridge ?? process.env.BROWSER_BRIDGE_AUTOSTART !== "0") ensureBridgeStarted();
+  const bridgeUrl = options.bridgeUrl ?? process.env.BROWSER_BRIDGE_URL ?? defaultBridgeUrl();
+  const token = options.bridgeToken ?? await readBridgeToken();
+  const connection = new CdpConnection(bridgeUrl, "extension", timeoutMs, {
+    type: "hello",
+    role: "sdk",
+    token,
+    protocolVersion: 1,
+  });
+  await connection.connect();
+  await connection.waitForExtension(timeoutMs);
+  return new Browser(connection);
+}

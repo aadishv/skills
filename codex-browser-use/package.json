@@ -1,0 +1,24 @@
+{
+  "name": "codex-browser-use-skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bridge": "node scripts/bridge.mjs",
+    "check": "tsc --noEmit && node --check scripts/bridge.mjs && node --check extension/background.js && node --check extension/options.js",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.20.0"
+}
