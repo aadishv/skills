@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Codex Browser Use Bridge",
+  "name": "pi browser use",
   "description": "Exposes Chrome DevTools Protocol sessions to the local codex-browser-use skill.",
   "version": "0.1.0",
   "minimum_chrome_version": "116",
@@ -17,7 +17,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Codex Browser Use Bridge"
+    "default_title": "pi browser use bridge"
   },
   "options_page": "options.html",
   "content_security_policy": {

@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/browser-use.ts"
+    ],
+    "skills": [
+      "."
+    ]
+  },
   "scripts": {
     "bridge": "node scripts/bridge.mjs",
     "check": "tsc --noEmit && node --check scripts/bridge.mjs && node --check extension/background.js && node --check extension/options.js",
@@ -10,6 +21,11 @@
   },
   "dependencies": {
     "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
