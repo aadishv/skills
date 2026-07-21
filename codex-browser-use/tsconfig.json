@@ -10,5 +10,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["sdk/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
+  "include": ["sdk/**/*.ts"]
 }
