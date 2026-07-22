@@ -52,20 +52,20 @@ export CDP_URL=ws://127.0.0.1:9222/devtools/browser/...
 
 When either CDP variable is present, `backend: "auto"` prefers raw CDP. Modern Chrome may require a non-default `--user-data-dir` when launched with `--remote-debugging-port`.
 
-## Pi: browser_repl (primary)
+## Pi: execute_browser_code (primary)
 
-When running in Pi, this skill dynamically enables the `browser_repl` tool after this `SKILL.md` is loaded. Use it as the primary way to execute browser SDK code. It evaluates JavaScript in one persistent Node REPL, so variables and browser/page handles survive across tool calls.
+When running in Pi, this skill dynamically enables the `execute_browser_code` tool after this `SKILL.md` is loaded. Use it as the primary way to execute browser SDK code. Each call runs TypeScript in a fresh async scope, while a worker-owned `browser` connection persists across successful calls.
 
-The REPL already imports `connectBrowser`, `Browser`, `Page`, and `Locator`. Each call connects `browser` before evaluating your code, and also provides `getBrowser()`, `tabs()`, and `page(targetIdOrPrefix)`. Use top-level `await` directly:
+Each call provides `browser`, `tabs()`, `page(targetIdOrPrefix)`, `connectBrowser`, `Browser`, `Page`, and `Locator`. Top-level `await` is supported and the final expression is returned:
 
-```js
+```ts
 const allTabs = await tabs()
 const target = allTabs.find((tab) => tab.url.includes("example.com"))
 const currentPage = await page(target.targetId)
 await currentPage.accessibilitySnapshot({ compact: true })
 ```
 
-The tool appears on the model turn after a normal `read` of this file. Do not use `node -e` or `tsx` in Pi unless `browser_repl` is unavailable or unsuitable.
+Local variables do not survive between calls. Reacquire pages with `page()` in each call. The tool appears on the model turn after a normal `read` of this file. Every `execute_browser_code` call must include a concise `intent` and an explicit `timeout` in seconds; use 10 seconds unless the action needs longer. Do not use `node -e` or standalone `tsx` scripts in Pi unless `execute_browser_code` is unavailable or unsuitable.
 
 ## Script fallbacks
 
@@ -117,12 +117,15 @@ await page.evaluate("document.title");
 await page.evaluate((value) => document.body.dataset.value = value, "x");
 await page.accessibilitySnapshot({ compact: true });
 await page.screenshot("/tmp/page.png");
-await page.locator("button[type=submit]").click();
-await page.locator("input[name=q]").fill("query");
+await page.getByRole("button", { name: "Submit" }).click();
+await page.getByRole("textbox", { name: "Search" }).fill("query");
+await page.locator("a").filter({ hasText: "API keys" }).first().click();
 await page.locator("main").text();
 await page.send("Network.enable"); // exact target-session CDP escape hatch
 await browser.send("Target.getTargets"); // exact browser-level CDP
 await browser.close();
 ```
+
+If a call times out, the worker is terminated to stop the code. The next call starts a fresh worker and browser connection.
 
 See [references/API.md](references/API.md) for backend configuration and protocol details.

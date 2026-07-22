@@ -33,6 +33,12 @@ Environment equivalents:
 
 `auto` chooses raw CDP when `CDP_URL` or `CDP_PORT` is present and otherwise chooses the extension.
 
+## Pi execution model
+
+`execute_browser_code` transpiles each TypeScript snippet and runs it in a fresh async function scope. Its worker keeps one `Browser` connection across successful calls, but local variables never cross call boundaries. The final expression is returned automatically.
+
+The timeout covers queueing, compilation, connection setup, and execution. A timeout or cancellation terminates the worker so synchronous loops and hung operations cannot continue. The following call creates a new worker and browser connection.
+
 ## CDP wire protocol
 
 After the bridge's authenticated role handshake, SDK-to-extension traffic uses flattened CDP messages without a custom RPC envelope:
@@ -107,17 +113,27 @@ Raw CDP supports the browser's complete available protocol. Extension mode is su
 - `screenshot(path?)`: returns a `Buffer` and optionally writes it
 - `accessibilitySnapshot({compact?})`: formatted accessibility tree
 - `locator(cssSelector)`
+- `getByRole(role, options?)`
+- `getByText(text, options?)`
 - `close()`: closes the tab
 
 ### `Locator`
 
-The locator is intentionally small and CSS-only:
+Locators provide a focused set of Playwright-style conveniences:
 
-- `text()`
-- `click()`: resolves the element's center and dispatches trusted CDP mouse events
-- `fill(value)`: focuses and clears an input, textarea, or contenteditable element, then uses `Input.insertText`
+- `filter({hasText?, visible?})`
+- `first()`, `last()`, `nth(index)`
+- `getByRole(role, {name?, exact?})`
+- `getByText(text, {exact?})`
+- `count()`, `allTextContents()`, `text()`
+- `getAttribute(name)`, `isVisible()`
+- `waitFor({state?, timeoutMs?})`
+- `click()`: resolves the first matching element's center and dispatches trusted CDP mouse events
+- `fill(value)`: focuses and clears the first matching input, textarea, or contenteditable element, then uses `Input.insertText`
 
-This is Playwright-like convenience, not Playwright compatibility. It does not yet provide auto-waiting, role selectors, frame locators, retries, or actionability checks.
+Text and accessible-name matching accept strings or regular expressions. Role lookup supports common implicit HTML roles in addition to explicit `role` attributes.
+
+This is Playwright-like convenience, not Playwright compatibility. It does not provide frame locators, retries, or full Playwright actionability and accessible-name semantics.
 
 ## Bridge commands
 
