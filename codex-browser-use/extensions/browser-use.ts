@@ -11,7 +11,7 @@ const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const SKILL_PATH = resolve(EXTENSION_DIR, "..", "SKILL.md");
 const WORKER_PATH = resolve(EXTENSION_DIR, "browser-code-worker.ts");
 const TSX_LOADER_URL = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
-const SKILL_COMMAND = "/skill:codex-browser-use";
+const SKILL_COMMANDS = ["/skill:codex-browser-use", "$codex-browser-use"];
 
 interface WorkerResult {
   type: "result" | "error";
@@ -228,7 +228,7 @@ export default function browserUseExtension(pi: ExtensionAPI) {
       async execute(_toolCallId, params, signal, onUpdate) {
         if (!executor) throw new Error("Browser code executor is not active");
         const timeoutMs = (params.timeout ?? 10) * 1_000;
-        onUpdate?.({ content: [{ type: "text", text: `Executing browser code: ${params.intent}` }], details: {} });
+        onUpdate?.({ content: [{ type: "text", text: `${params.intent}` }], details: {} });
         const output = await executor.run(params.code, timeoutMs, signal);
         return {
           content: [{ type: "text", text: formatResult(output) }],
@@ -237,7 +237,7 @@ export default function browserUseExtension(pi: ExtensionAPI) {
       },
       renderCall(args, theme) {
         return new Text(
-          theme.fg("toolTitle", theme.bold("Execute Browser Code")) + theme.fg("muted", `: ${args.intent}`),
+          theme.fg("toolTitle", theme.bold("execute_browser_code")) + theme.fg("muted", ` ${args.intent}`),
           0,
           0,
         );
@@ -262,7 +262,7 @@ export default function browserUseExtension(pi: ExtensionAPI) {
   };
 
   pi.on("input", async (event, ctx) => {
-    if (event.text === SKILL_COMMAND || event.text.startsWith(`${SKILL_COMMAND} `)) await activate(ctx);
+    if (SKILL_COMMANDS.some(cmd => event.text.includes(cmd))) await activate(ctx);
   });
 
   pi.on("tool_result", async (event, ctx) => {

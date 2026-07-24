@@ -117,6 +117,9 @@ await page.evaluate("document.title");
 await page.evaluate((value) => document.body.dataset.value = value, "x");
 await page.accessibilitySnapshot({ compact: true });
 await page.screenshot("/tmp/page.png");
+await page.screencast(async () => {
+  await page.getByRole("button", { name: "Submit" }).click();
+}); // saves an MP4 to a unique temporary path
 await page.getByRole("button", { name: "Submit" }).click();
 await page.getByRole("textbox", { name: "Search" }).fill("query");
 await page.locator("a").filter({ hasText: "API keys" }).first().click();

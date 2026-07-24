@@ -3,6 +3,9 @@ import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ScreencastOptions, ScreencastResult } from "./screencast-types.ts";
+
+export { ScreencastError, type ScreencastOptions, type ScreencastResult } from "./screencast-types.ts";
 
 const DEFAULT_BRIDGE_PORT = 32123;
 const DEFAULT_TIMEOUT = 15_000;
@@ -423,6 +426,7 @@ export class Page {
   readonly targetId: string;
   readonly sessionId: string;
   readonly #connection: CdpConnection;
+  #screencasting = false;
 
   constructor(connection: CdpConnection, targetId: string, sessionId: string) {
     this.#connection = connection;
@@ -439,6 +443,20 @@ export class Page {
     return this.#connection.on(method, (params, message) => {
       if (message.sessionId === this.sessionId) listener(params);
     });
+  }
+
+  async screencast<T>(
+    action: () => T | Promise<T>,
+    options: ScreencastOptions = {},
+  ): Promise<ScreencastResult<T>> {
+    if (this.#screencasting) throw new Error("A screencast is already running on this page");
+    this.#screencasting = true;
+    try {
+      const { recordScreencast } = await import("./screencast.ts");
+      return await recordScreencast(this, action, options);
+    } finally {
+      this.#screencasting = false;
+    }
   }
 
   async goto(url: string, options: { timeoutMs?: number } = {}): Promise<void> {

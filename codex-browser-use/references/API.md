@@ -111,6 +111,7 @@ Raw CDP supports the browser's complete available protocol. Extension mode is su
 - `title()`, `url()`
 - `content(selector?)`
 - `screenshot(path?)`: returns a `Buffer` and optionally writes it
+- `screencast(action, options?)`: records the viewport while running regular SDK actions, then returns the callback value and MP4 details
 - `accessibilitySnapshot({compact?})`: formatted accessibility tree
 - `locator(cssSelector)`
 - `getByRole(role, options?)`
@@ -134,6 +135,41 @@ Locators provide a focused set of Playwright-style conveniences:
 Text and accessible-name matching accept strings or regular expressions. Role lookup supports common implicit HTML roles in addition to explicit `role` attributes.
 
 This is Playwright-like convenience, not Playwright compatibility. It does not provide frame locators, retries, or full Playwright actionability and accessible-name semantics.
+
+## Screencasts
+
+Record an action without choosing any output settings:
+
+```ts
+const recording = await page.screencast(async () => {
+  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByText("Complete").waitFor();
+});
+
+recording.path; // unique .mp4 under the system temporary directory
+recording.value; // value returned by the callback
+recording.duration; // seconds
+recording.frameCount;
+recording.droppedFrames;
+```
+
+The zero-configuration defaults produce an H.264 MP4 at up to 1280×720. File output is always used rather than returning a potentially large video buffer. Supply options only when the defaults are unsuitable:
+
+```ts
+await page.screencast(action, {
+  path: "/tmp/checkout.mp4",
+  maxWidth: 1920,
+  maxHeight: 1080,
+  everyNthFrame: 1,
+  finalFrameHoldMs: 250,
+  maxQueuedBytes: 256 * 1024 * 1024,
+  firstFrameTimeoutMs: 5_000,
+});
+```
+
+Chrome emits screencast frames when the viewport paints, so recordings use variable frame timing rather than guaranteeing a fixed frame rate. They contain viewport video only, without browser chrome or audio. Only one screencast may run on a given `Page` at once.
+
+The callback's initial visual state is captured before it runs, and the final state is held briefly before recording stops. If the callback fails, the SDK still finalizes the MP4 and throws a `ScreencastError` whose message and `path` property identify the saved recording.
 
 ## Bridge commands
 

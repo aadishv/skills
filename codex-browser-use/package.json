@@ -20,8 +20,11 @@
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@mediabunny/server": "^1.51.0",
     "acorn": "^8.17.0",
     "esbuild": "^0.28.1",
+    "fast-png": "^8.0.0",
+    "mediabunny": "^1.51.0",
     "tsx": "^4.20.6",
     "ws": "^8.18.3"
   },
