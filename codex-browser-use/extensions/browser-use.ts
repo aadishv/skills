@@ -218,6 +218,7 @@ export default function browserUseExtension(pi: ExtensionAPI) {
       promptGuidelines: [
         "Use execute_browser_code for browser work after loading the codex-browser-use skill.",
         "Every execute_browser_code call must include a concise intent and an explicit timeout in seconds (10 seconds is the default).",
+        "Use resetBrowser(options) to switch the persistent worker between extension and CDP backends when needed.",
         "Use execute_browser_code to list tabs and deliberately select a target before attaching, and ask before consequential browser actions.",
       ],
       parameters: Type.Object({

@@ -37,6 +37,16 @@ Environment equivalents:
 
 `execute_browser_code` transpiles each TypeScript snippet and runs it in a fresh async function scope. Its worker keeps one `Browser` connection across successful calls, but local variables never cross call boundaries. The final expression is returned automatically.
 
+The worker connects lazily when `browser`, `tabs()`, or `page()` first needs a browser. It also injects `resetBrowser(options)`, which closes the current connection, saves the supplied `ConnectBrowserOptions`, and connects to the selected backend. The selection persists across calls:
+
+```ts
+await resetBrowser({ backend: "cdp", cdpPort: 9222 });
+await resetBrowser({ backend: "cdp", cdpUrl: "ws://127.0.0.1:9222/devtools/browser/..." });
+await resetBrowser({ backend: "extension" });
+```
+
+The injected `browser` is a stable facade over the worker's current connection, so it continues to work after a reset. A failed reset leaves the worker disconnected rather than restoring the old connection.
+
 The timeout covers queueing, compilation, connection setup, and execution. A timeout or cancellation terminates the worker so synchronous loops and hung operations cannot continue. The following call creates a new worker and browser connection.
 
 ## CDP wire protocol

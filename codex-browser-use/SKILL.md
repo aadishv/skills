@@ -56,7 +56,7 @@ When either CDP variable is present, `backend: "auto"` prefers raw CDP. Modern C
 
 When running in Pi, this skill dynamically enables the `execute_browser_code` tool after this `SKILL.md` is loaded. Use it as the primary way to execute browser SDK code. Each call runs TypeScript in a fresh async scope, while a worker-owned `browser` connection persists across successful calls.
 
-Each call provides `browser`, `tabs()`, `page(targetIdOrPrefix)`, `connectBrowser`, `Browser`, `Page`, and `Locator`. Top-level `await` is supported and the final expression is returned:
+Each call provides `browser`, `tabs()`, `page(targetIdOrPrefix)`, `resetBrowser(options)`, `connectBrowser`, `Browser`, `Page`, and `Locator`. Top-level `await` is supported and the final expression is returned:
 
 ```ts
 const allTabs = await tabs()
@@ -65,7 +65,16 @@ const currentPage = await page(target.targetId)
 await currentPage.accessibilitySnapshot({ compact: true })
 ```
 
-Local variables do not survive between calls. Reacquire pages with `page()` in each call. The tool appears on the model turn after a normal `read` of this file. Every `execute_browser_code` call must include a concise `intent` and an explicit `timeout` in seconds; use 10 seconds unless the action needs longer. Do not use `node -e` or standalone `tsx` scripts in Pi unless `execute_browser_code` is unavailable or unsuitable.
+The default connection is lazy. To control a Chromium instance started after the skill was loaded, start it with a remote-debugging port and switch the persistent worker before listing its tabs:
+
+```ts
+await resetBrowser({ backend: "cdp", cdpPort: 9222 })
+await tabs()
+```
+
+Use `await resetBrowser({ backend: "cdp", cdpUrl: "http://127.0.0.1:9222" })` for an HTTP discovery URL or browser WebSocket URL, and `await resetBrowser({ backend: "extension" })` to return to the extension. Resetting closes and detaches the previous connection; if the new connection fails, the worker remains disconnected and can be reset again.
+
+Local variables do not survive between calls, but the selected backend and browser connection do. Reacquire pages with `page()` in each call. The tool appears on the model turn after a normal `read` of this file. Every `execute_browser_code` call must include a concise `intent` and an explicit `timeout` in seconds; use 10 seconds unless the action needs longer. Do not use `node -e` or standalone `tsx` scripts in Pi unless `execute_browser_code` is unavailable or unsuitable.
 
 ## Script fallbacks
 
