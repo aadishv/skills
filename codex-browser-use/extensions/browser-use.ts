@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, keyHint, truncateHead } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, highlightCode, keyHint, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createRequire } from "node:module";
@@ -12,6 +12,9 @@ const SKILL_PATH = resolve(EXTENSION_DIR, "..", "SKILL.md");
 const WORKER_PATH = resolve(EXTENSION_DIR, "browser-code-worker.ts");
 const TSX_LOADER_URL = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const SKILL_COMMANDS = ["/skill:codex-browser-use", "$codex-browser-use"];
+const CALL_PREVIEW_LINES = 10;
+const TOOL_NAME = "execute_browser_code";
+const ACTIVATION_ENTRY = "browser-use-activated";
 
 interface WorkerResult {
   type: "result" | "error";
@@ -192,6 +195,33 @@ function isSkillRead(input: unknown, cwd: string): boolean {
   return resolve(cwd, path.replace(/^@/, "")) === SKILL_PATH;
 }
 
+/**
+ * Sessions are resumed in a fresh process, so the activation triggers (skill command, skill read)
+ * never replay. Look for the marker we persist on activation, falling back to traces of browser use
+ * for sessions recorded before that marker existed.
+ */
+function wasActivatedInSession(entries: readonly SessionEntry[], cwd: string): boolean {
+  for (const entry of entries) {
+    if (entry.type === "custom" && entry.customType === ACTIVATION_ENTRY) return true;
+    if (entry.type !== "message") continue;
+    const message = entry.message;
+    if (message.role === "user") {
+      const text = typeof message.content === "string"
+        ? message.content
+        : message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+      if (text.includes(SKILL_PATH)) return true;
+      continue;
+    }
+    if (message.role !== "assistant") continue;
+    for (const part of message.content) {
+      if (part.type !== "toolCall") continue;
+      if (part.name === TOOL_NAME) return true;
+      if (part.name === "read" && isSkillRead(part.arguments, cwd)) return true;
+    }
+  }
+  return false;
+}
+
 function toolResultText(result: { content?: unknown }): string {
   if (!Array.isArray(result.content)) return "";
   return result.content
@@ -204,14 +234,22 @@ function toolResultText(result: { content?: unknown }): string {
 
 export default function browserUseExtension(pi: ExtensionAPI) {
   let enabled = false;
+  let registered = false;
   let executor: SerialBrowserExecutor | undefined;
 
-  const activate = async (ctx: ExtensionContext) => {
+  // Tool registrations outlive the session that created them, so the active set has to be managed
+  // explicitly or the tool leaks into unrelated sessions with a dead executor.
+  const setToolActive = (active: boolean) => {
+    const others = pi.getActiveTools().filter((name) => name !== TOOL_NAME);
+    pi.setActiveTools(active ? [...others, TOOL_NAME] : others);
+  };
+
+  const activate = async (ctx: ExtensionContext, restored = false) => {
     if (enabled) return;
     executor = new SerialBrowserExecutor();
 
     pi.registerTool({
-      name: "execute_browser_code",
+      name: TOOL_NAME,
       label: "Execute Browser Code",
       description: "Execute call-scoped TypeScript with the browser-use SDK over a persistent browser connection",
       promptSnippet: "Execute call-scoped TypeScript against the browser-use SDK",
@@ -236,12 +274,22 @@ export default function browserUseExtension(pi: ExtensionAPI) {
           details: {},
         };
       },
-      renderCall(args, theme) {
-        return new Text(
-          theme.fg("toolTitle", theme.bold("execute_browser_code")) + theme.fg("muted", ` ${args.intent}`),
-          0,
-          0,
-        );
+      renderCall(args, theme, { expanded }) {
+        let text = theme.fg("toolTitle", theme.bold("execute_browser_code"));
+        if (args.intent) text += theme.fg("muted", ` ${args.intent}`);
+
+        const code = typeof args.code === "string" ? args.code.replace(/\s+$/, "") : "";
+        if (code) {
+          const lines = highlightCode(code, "typescript");
+          const shown = expanded ? lines : lines.slice(0, CALL_PREVIEW_LINES);
+          text += `\n\n${shown.join("\n")}`;
+          const remaining = lines.length - shown.length;
+          if (remaining > 0) {
+            const hint = keyHint("app.tools.expand", "to expand");
+            text += theme.fg("muted", `\n… ${remaining} more line${remaining === 1 ? "" : "s"} (${lines.length} total, `) + hint + theme.fg("muted", ")");
+          }
+        }
+        return new Text(text, 0, 0);
       },
       renderResult(result, { expanded }, theme) {
         const output = toolResultText(result);
@@ -258,9 +306,17 @@ export default function browserUseExtension(pi: ExtensionAPI) {
       },
     });
 
+    registered = true;
     enabled = true;
+    setToolActive(true);
+    if (!restored) pi.appendEntry(ACTIVATION_ENTRY);
     ctx.ui.setStatus("browser-use", "browser use enabled");
   };
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (wasActivatedInSession(ctx.sessionManager.getEntries(), ctx.cwd)) await activate(ctx, true);
+    else if (registered) setToolActive(false);
+  });
 
   pi.on("input", async (event, ctx) => {
     if (SKILL_COMMANDS.some(cmd => event.text.includes(cmd))) await activate(ctx);
