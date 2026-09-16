@@ -262,7 +262,7 @@ export default function browserUseExtension(pi: ExtensionAPI) {
       parameters: Type.Object({
         intent: Type.String({ minLength: 1, description: "Concise summary of the action, shown in the TUI (for example, 'Check open tabs')." }),
         timeout: Type.Number({ minimum: 0.1, maximum: 300, default: 10, description: "Required end-to-end timeout in seconds. Use 10 unless the action needs a different limit." }),
-        code: Type.String({ description: "TypeScript to execute in an isolated async scope. Top-level await is supported and the final expression is returned." }),
+        code: Type.String({ description: "TypeScript to execute in an isolated async scope. Top-level await and import declarations are supported, and the final expression is returned." }),
       }),
       async execute(_toolCallId, params, signal, onUpdate) {
         if (!executor) throw new Error("Browser code executor is not active");

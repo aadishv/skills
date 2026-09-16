@@ -2,8 +2,6 @@
 
 ## Backend selection
 
-`connectBrowser()` accepts:
-
 ```ts
 interface ConnectBrowserOptions {
   backend?: "auto" | "extension" | "cdp";
@@ -17,153 +15,65 @@ interface ConnectBrowserOptions {
 }
 ```
 
-Environment equivalents:
+`auto` picks cdp when `CDP_URL` or `CDP_PORT` is set, else extension.
 
 | Variable | Meaning |
 | --- | --- |
 | `BROWSER_BACKEND` | `auto`, `extension`, or `cdp` |
-| `CDP_URL` | Raw browser HTTP discovery base or WebSocket URL |
-| `CDP_HOST` | Host used with `CDP_PORT`; defaults to `127.0.0.1` |
-| `CDP_PORT` | Raw browser debugging port |
+| `CDP_URL` | HTTP discovery base or browser WebSocket URL |
+| `CDP_HOST` | Host for `CDP_PORT`, default `127.0.0.1` |
+| `CDP_PORT` | Debugging port |
 | `BROWSER_BRIDGE_URL` | Extension bridge WebSocket URL |
-| `BROWSER_BRIDGE_PORT` | Port used by the local bridge process |
+| `BROWSER_BRIDGE_PORT` | Local bridge port |
 | `CODEX_BROWSER_TOKEN` | Pairing token override |
 | `CODEX_BROWSER_CONFIG` | Bridge config path override |
-| `BROWSER_BRIDGE_AUTOSTART` | Set to `0` to prevent SDK autostart |
-
-`auto` chooses raw CDP when `CDP_URL` or `CDP_PORT` is present and otherwise chooses the extension.
-
-## Pi execution model
-
-`execute_browser_code` transpiles each TypeScript snippet and runs it in a fresh async function scope. Its worker keeps one `Browser` connection across successful calls, but local variables never cross call boundaries. The final expression is returned automatically.
-
-The worker connects lazily when `browser`, `tabs()`, or `page()` first needs a browser. It also injects `resetBrowser(options)`, which closes the current connection, saves the supplied `ConnectBrowserOptions`, and connects to the selected backend. The selection persists across calls:
-
-```ts
-await resetBrowser({ backend: "cdp", cdpPort: 9222 });
-await resetBrowser({ backend: "cdp", cdpUrl: "ws://127.0.0.1:9222/devtools/browser/..." });
-await resetBrowser({ backend: "extension" });
-```
-
-The injected `browser` is a stable facade over the worker's current connection, so it continues to work after a reset. A failed reset leaves the worker disconnected rather than restoring the old connection.
-
-The timeout covers queueing, compilation, connection setup, and execution. A timeout or cancellation terminates the worker so synchronous loops and hung operations cannot continue. The following call creates a new worker and browser connection.
-
-## CDP wire protocol
-
-After the bridge's authenticated role handshake, SDK-to-extension traffic uses flattened CDP messages without a custom RPC envelope:
-
-```json
-{"id":1,"method":"Target.getTargets","params":{}}
-```
-
-Target-session request:
-
-```json
-{"id":2,"method":"Runtime.evaluate","params":{"expression":"document.title"},"sessionId":"..."}
-```
-
-Response:
-
-```json
-{"id":2,"result":{"result":{"type":"string","value":"Example"}},"sessionId":"..."}
-```
-
-Event:
-
-```json
-{"method":"Page.loadEventFired","params":{"timestamp":123},"sessionId":"..."}
-```
-
-The high-level SDK converts operations such as `goto`, `evaluate`, `click`, and `fill` into these CDP requests before the extension sees them. The middleman only authenticates peers, enforces one SDK client, reports connection state, and relays CDP JSON unchanged.
-
-The bridge handshake itself is transport control rather than CDP:
-
-```json
-{"type":"hello","role":"sdk","token":"...","protocolVersion":1}
-```
-
-## Extension's browser-level CDP subset
-
-The extension translates these browser-level methods to Chrome extension APIs:
-
-- `Browser.getVersion`
-- `Target.getTargets`
-- `Target.getTargetInfo`
-- `Target.createTarget`
-- `Target.attachToTarget`
-- `Target.detachFromTarget`
-- `Target.closeTarget`
-- `Target.activateTarget`
-
-Once attached, requests carrying a `sessionId` are passed to `chrome.debugger.sendCommand` unchanged. `chrome.debugger.onEvent` is emitted as a flattened CDP event carrying that same session ID.
-
-Raw CDP supports the browser's complete available protocol. Extension mode is subject to `chrome.debugger` restrictions: Chrome internal pages cannot generally be controlled, some browser-level domains are unavailable, and another debugger or open DevTools window may prevent attachment.
+| `BROWSER_BRIDGE_AUTOSTART` | `0` disables SDK autostart |
 
 ## Classes
 
-### `Browser`
+`Browser`
+- `backend`: `"extension"` or `"cdp"`
+- `tabs()`: page targets, excluding `chrome://`
+- `newPage(url?)`: create and attach to a background page
+- `page(targetIdOrPrefix)`: attach to one exact or uniquely-prefixed target
+- `send(method, params?)`, `close()`
 
-- `backend`: selected backend, `extension` or `cdp`
-- `tabs()`: returns non-`chrome://` page targets
-- `newPage(url?)`: creates and attaches to a background page
-- `page(targetIdOrPrefix)`: attaches to one exact or uniquely prefixed target
-- `send(method, params?)`: browser-level CDP command
-- `close()`: detaches sessions and closes the transport
-
-### `Page`
-
+`Page`
 - `targetId`, `sessionId`
-- `send(method, params?)`: target-session CDP command
-- `on(method, listener)`: target-session CDP event listener
-- `goto(url, options?)`
+- `send(method, params?)`, `on(method, listener)`
+- `goto(url, options?)`, `title()`, `url()`, `content(selector?)`
 - `evaluate(expressionOrFunction, ...JSONArgs)`
-- `title()`, `url()`
-- `content(selector?)`
-- `screenshot(path?)`: returns a `Buffer` and optionally writes it
-- `screencast(action, options?)`: records the viewport while running regular SDK actions, then returns the callback value and MP4 details
-- `accessibilitySnapshot({compact?})`: formatted accessibility tree
-- `locator(cssSelector)`
-- `getByRole(role, options?)`
-- `getByText(text, options?)`
+- `accessibilitySnapshot({compact?})`
+- `screenshot(path?)`: returns a `Buffer`, writes it if given a path
+- `screencast(action, options?)`
+- `locator(css)`, `getByRole(role, options?)`, `getByText(text, options?)`
 - `close()`: closes the tab
 
-### `Locator`
-
-Locators provide a focused set of Playwright-style conveniences:
-
-- `filter({hasText?, visible?})`
-- `first()`, `last()`, `nth(index)`
-- `getByRole(role, {name?, exact?})`
-- `getByText(text, {exact?})`
-- `count()`, `allTextContents()`, `text()`
-- `getAttribute(name)`, `isVisible()`
+`Locator`
+- `filter({hasText?, visible?})`, `first()`, `last()`, `nth(i)`
+- `getByRole(role, {name?, exact?})`, `getByText(text, {exact?})`
+- `count()`, `text()`, `allTextContents()`, `getAttribute(name)`, `isVisible()`
 - `waitFor({state?, timeoutMs?})`
-- `click()`: resolves the first matching element's center and dispatches trusted CDP mouse events
-- `fill(value)`: focuses and clears the first matching input, textarea, or contenteditable element, then uses `Input.insertText`
+- `click()`: centers on the first match, dispatches trusted CDP mouse events
+- `fill(value)`: focuses and clears the first input/textarea/contenteditable, then `Input.insertText`
 
-Text and accessible-name matching accept strings or regular expressions. Role lookup supports common implicit HTML roles in addition to explicit `role` attributes.
-
-This is Playwright-like convenience, not Playwright compatibility. It does not provide frame locators, retries, or full Playwright actionability and accessible-name semantics.
+Text and accessible-name matchers take strings or regexes. Role lookup covers common implicit HTML roles plus explicit `role`. This is Playwright-*like*, not Playwright: no frame locators, no retries, no full actionability or accessible-name semantics.
 
 ## Screencasts
 
-Record an action without choosing any output settings:
-
 ```ts
-const recording = await page.screencast(async () => {
+const rec = await page.screencast(async () => {
   await page.getByRole("button", { name: "Submit" }).click();
   await page.getByText("Complete").waitFor();
 });
-
-recording.path; // unique .mp4 under the system temporary directory
-recording.value; // value returned by the callback
-recording.duration; // seconds
-recording.frameCount;
-recording.droppedFrames;
+rec.path;          // unique .mp4 under the system temp dir
+rec.value;         // callback's return value
+rec.duration;      // seconds
+rec.frameCount;
+rec.droppedFrames;
 ```
 
-The zero-configuration defaults produce an H.264 MP4 at up to 1280×720. File output is always used rather than returning a potentially large video buffer. Supply options only when the defaults are unsuitable:
+Defaults give H.264 MP4 up to 1280x720, always written to disk. Override only when they don't fit:
 
 ```ts
 await page.screencast(action, {
@@ -177,18 +87,67 @@ await page.screencast(action, {
 });
 ```
 
-Chrome emits screencast frames when the viewport paints, so recordings use variable frame timing rather than guaranteeing a fixed frame rate. They contain viewport video only, without browser chrome or audio. Only one screencast may run on a given `Page` at once.
+Frames arrive when the viewport paints, so timing is variable, not a fixed frame rate. Viewport video only: no browser chrome, no audio. One screencast per `Page` at a time. The initial state is captured before the callback runs and the final state is held briefly after. A failing callback still finalizes the MP4, then throws a `ScreencastError` carrying `path`.
 
-The callback's initial visual state is captured before it runs, and the final state is held briefly before recording stops. If the callback fails, the SDK still finalizes the MP4 and throws a `ScreencastError` whose message and `path` property identify the saved recording.
+## Pi execution model
 
-## Bridge commands
+Code runs in Node, in a `worker_threads` worker owned by the Pi process, not in the page. Node builtins, this skill's `node_modules`, and the filesystem are all reachable; DOM globals are not. Anything that must run in the page goes through `page.evaluate`.
+
+Each snippet is transpiled by esbuild (`loader: "ts"`, `target: "es2022"`), parsed by acorn as a module, then rewritten and wrapped in an `AsyncFunction` whose parameters are the injected names. Consequences:
+
+- Top-level `await` works.
+- Top-level `import` declarations are hoisted and rewritten to awaited dynamic imports, so `import { sep } from "node:path"` and `const { sep } = await import("node:path")` both work and can be mixed.
+- An `AsyncFunction` has no referring module, so a raw `import()` inside it cannot resolve anything but builtins. Both import forms are routed through a helper defined in the worker module: bare specifiers resolve from this package's `node_modules`, `./` and `../` specifiers against `process.cwd()`, and absolute paths as given.
+- `export` and `import.meta` have no meaning in a function body and raise a stated error rather than a raw `SyntaxError`.
+- If the last statement is an expression, it becomes the return value; otherwise the call returns `undefined`. The wrap covers the whole statement, so a parenthesized `({ a: 1 })` returns the object.
+- The result is formatted with `util.inspect` at depth 6, 100 array items, 20k chars per string, 120-column break, then truncated again by the tool's own output limit. Return a shaped value instead of dumping raw structures.
+
+Snippets are plain JavaScript once the types are stripped, so ASI applies: a line starting with `(` or `[` continues the previous line. Terminate statements when the next one opens with a bracket.
+
+Calls are serialized: a queued call's timeout budget starts when it is queued, not when it begins running. The timeout covers queueing, compilation, connection setup, and execution, and firing it calls `worker.terminate()`, which kills synchronous loops and hung operations. The next call gets a new worker and a new connection.
+
+The worker holds one `Browser` across successful calls, but locals never cross calls. It connects lazily the first time `browser`, `tabs()`, or `page()` needs a connection.
+
+`resetBrowser(options)` closes the current connection, stores the `ConnectBrowserOptions`, and reconnects. The selection persists:
+
+```ts
+await resetBrowser({ backend: "cdp", cdpPort: 9222 });
+await resetBrowser({ backend: "cdp", cdpUrl: "ws://127.0.0.1:9222/devtools/browser/..." });
+await resetBrowser({ backend: "extension" });
+```
+
+The injected `browser` is a `Proxy` over the current connection, so it survives a reset. Every property access on it resolves as an async call, and reading `.backend` before anything has connected throws. A failed reset leaves the worker disconnected rather than restoring the old connection.
+
+## CDP wire protocol
+
+After the bridge handshake, SDK-to-extension traffic is flattened CDP with no custom envelope.
+
+```json
+{"type":"hello","role":"sdk","token":"...","protocolVersion":1}
+{"id":1,"method":"Target.getTargets","params":{}}
+{"id":2,"method":"Runtime.evaluate","params":{"expression":"document.title"},"sessionId":"..."}
+{"id":2,"result":{"result":{"type":"string","value":"Example"}},"sessionId":"..."}
+{"method":"Page.loadEventFired","params":{"timestamp":123},"sessionId":"..."}
+```
+
+`goto`, `evaluate`, `click`, `fill` and friends become these requests before the extension sees them. The bridge only authenticates peers, enforces one SDK client, reports connection state, and relays CDP JSON unchanged.
+
+The extension maps these browser-level methods onto Chrome extension APIs:
+
+`Browser.getVersion`, `Target.getTargets`, `Target.getTargetInfo`, `Target.createTarget`, `Target.attachToTarget`, `Target.detachFromTarget`, `Target.closeTarget`, `Target.activateTarget`
+
+Anything with a `sessionId` goes to `chrome.debugger.sendCommand` unchanged, and `chrome.debugger.onEvent` comes back as a flattened event with that session ID.
+
+Raw CDP exposes the browser's whole protocol. Extension mode inherits `chrome.debugger` limits: Chrome internal pages are mostly off-limits, some browser-level domains are missing, and another debugger or an open DevTools window can block attachment.
+
+## Bridge
 
 ```bash
-node scripts/bridge.mjs setup          # create config and print pairing values
+node scripts/bridge.mjs setup          # create config, print pairing values
 node scripts/bridge.mjs setup --force  # rotate the pairing token
 node scripts/bridge.mjs start
 node scripts/bridge.mjs status
 node scripts/bridge.mjs stop
 ```
 
-The bridge binds only to `127.0.0.1`. It authenticates both peers with the pairing token, requires a `chrome-extension://` Origin from the extension, rejects browser Origins from SDK clients, and supports one extension and one SDK client at a time.
+Binds `127.0.0.1` only. Both peers authenticate with the pairing token; the extension must send a `chrome-extension://` Origin and SDK clients must not send a browser Origin. One extension and one SDK client at a time.
