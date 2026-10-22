@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "pi browser use",
-  "description": "Exposes Chrome DevTools Protocol sessions to the local codex-browser-use skill.",
+  "description": "Exposes Chrome DevTools Protocol sessions to the local browser-use skill.",
   "version": "0.1.0",
   "minimum_chrome_version": "116",
   "permissions": [

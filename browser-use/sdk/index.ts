@@ -107,11 +107,11 @@ function defaultBridgeUrl(): string {
 }
 
 function configPath(): string {
-  return process.env.CODEX_BROWSER_CONFIG ?? resolve(homedir(), ".agents/skills/codex-browser-use/.bridge.json");
+  return process.env.BROWSER_USE_CONFIG ?? resolve(homedir(), ".agents/skills/browser-use/.bridge.json");
 }
 
 async function readBridgeToken(): Promise<string> {
-  if (process.env.CODEX_BROWSER_TOKEN) return process.env.CODEX_BROWSER_TOKEN;
+  if (process.env.BROWSER_USE_TOKEN) return process.env.BROWSER_USE_TOKEN;
   try {
     const contents = await import("node:fs/promises").then(({ readFile }) => readFile(configPath(), "utf8"));
     const parsed = JSON.parse(contents) as { token?: unknown };

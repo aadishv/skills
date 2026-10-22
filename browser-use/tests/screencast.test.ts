@@ -87,7 +87,7 @@ test("chooses a temporary output path by default", async () => {
   const page = new FakePage();
   const result = await recordScreencast(page as never, () => undefined, { finalFrameHoldMs: 0 });
   try {
-    assert.equal(result.path.startsWith(join(tmpdir(), "codex-browser-use", "screencasts")), true);
+    assert.equal(result.path.startsWith(join(tmpdir(), "browser-use", "screencasts")), true);
     assert.equal(result.path.endsWith(".mp4"), true);
     assert.ok((await stat(result.path)).size > 0);
   } finally {

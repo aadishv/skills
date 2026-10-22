@@ -42,7 +42,7 @@ function nonNegativeNumber(value: number, name: string): number {
 
 function defaultPath(targetId: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return resolve(tmpdir(), "codex-browser-use", "screencasts", `${stamp}-${targetId.slice(0, 8)}-${randomUUID().slice(0, 8)}.mp4`);
+  return resolve(tmpdir(), "browser-use", "screencasts", `${stamp}-${targetId.slice(0, 8)}-${randomUUID().slice(0, 8)}.mp4`);
 }
 
 function frameTimestamp(params: JsonObject): number | undefined {

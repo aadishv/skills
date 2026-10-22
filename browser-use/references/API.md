@@ -2,20 +2,17 @@
 
 ## Backend selection
 
-```ts
-interface ConnectBrowserOptions {
-  backend?: "auto" | "extension" | "cdp";
-  cdpUrl?: string;
-  cdpHost?: string;
-  cdpPort?: number;
-  bridgeUrl?: string;
-  bridgeToken?: string;
-  timeoutMs?: number;
-  autoStartBridge?: boolean;
-}
+```js
+await connectBrowser({
+  backend: "auto",          // "auto", "extension", or "cdp"
+  cdpUrl, cdpHost, cdpPort, // cdp backend
+  bridgeUrl, bridgeToken,   // extension backend
+  timeoutMs,
+  autoStartBridge: true,
+});
 ```
 
-`auto` picks cdp when `CDP_URL` or `CDP_PORT` is set, else extension.
+Every option is optional. `auto` picks cdp when `CDP_URL` or `CDP_PORT` is set, else extension.
 
 | Variable | Meaning |
 | --- | --- |
@@ -25,8 +22,8 @@ interface ConnectBrowserOptions {
 | `CDP_PORT` | Debugging port |
 | `BROWSER_BRIDGE_URL` | Extension bridge WebSocket URL |
 | `BROWSER_BRIDGE_PORT` | Local bridge port |
-| `CODEX_BROWSER_TOKEN` | Pairing token override |
-| `CODEX_BROWSER_CONFIG` | Bridge config path override |
+| `BROWSER_USE_TOKEN` | Pairing token override |
+| `BROWSER_USE_CONFIG` | Bridge config path override |
 | `BROWSER_BRIDGE_AUTOSTART` | `0` disables SDK autostart |
 
 ## Classes
@@ -61,7 +58,7 @@ Text and accessible-name matchers take strings or regexes. Role lookup covers co
 
 ## Screencasts
 
-```ts
+```js
 const rec = await page.screencast(async () => {
   await page.getByRole("button", { name: "Submit" }).click();
   await page.getByText("Complete").waitFor();
@@ -75,7 +72,7 @@ rec.droppedFrames;
 
 Defaults give H.264 MP4 up to 1280x720, always written to disk. Override only when they don't fit:
 
-```ts
+```js
 await page.screencast(action, {
   path: "/tmp/checkout.mp4",
   maxWidth: 1920,
@@ -93,24 +90,22 @@ Frames arrive when the viewport paints, so timing is variable, not a fixed frame
 
 Code runs in Node, in a `worker_threads` worker owned by the Pi process, not in the page. Node builtins, this skill's `node_modules`, and the filesystem are all reachable; DOM globals are not. Anything that must run in the page goes through `page.evaluate`.
 
-Each snippet is transpiled by esbuild (`loader: "ts"`, `target: "es2022"`), parsed by acorn as a module, then rewritten and wrapped in an `AsyncFunction` whose parameters are the injected names. Consequences:
+Each snippet is plain JavaScript. The worker writes it to `.runtime/` in this skill and imports it as an ES module, with no transpiling or rewriting. Consequences:
 
-- Top-level `await` works.
-- Top-level `import` declarations are hoisted and rewritten to awaited dynamic imports, so `import { sep } from "node:path"` and `const { sep } = await import("node:path")` both work and can be mixed.
-- An `AsyncFunction` has no referring module, so a raw `import()` inside it cannot resolve anything but builtins. Both import forms are routed through a helper defined in the worker module: bare specifiers resolve from this package's `node_modules`, `./` and `../` specifiers against `process.cwd()`, and absolute paths as given.
-- `export` and `import.meta` have no meaning in a function body and raise a stated error rather than a raw `SyntaxError`.
-- If the last statement is an expression, it becomes the return value; otherwise the call returns `undefined`. The wrap covers the whole statement, so a parenthesized `({ a: 1 })` returns the object.
-- The result is formatted with `util.inspect` at depth 6, 100 array items, 20k chars per string, 120-column break, then truncated again by the tool's own output limit. Return a shaped value instead of dumping raw structures.
+- Top-level `await`, static `import`, and dynamic `import()` behave as in any module. Bare specifiers resolve from this package's `node_modules`; relative ones resolve against `.runtime/`, so use absolute paths for local files.
+- Top-level `return` is a `SyntaxError`. Syntax errors are reported with the line, via `node --check`.
+- The injected names are globals, so module declarations shadow them: `const tabs = await browser.tabs()` is fine, `const page = await page(id)` hits the temporal dead zone.
+- Only `text(value)` and `image(bufferOrPath)` produce output, in call order. `text()` adds strings as is and other values as `JSON.stringify` output. Return values, final expressions, and the worker's stdout/stderr (`console.*`) are discarded. A call with no output reports that.
+- `image(bufferOrPath)` takes bytes (such as `page.screenshot()`'s `Buffer`) or a path relative to `process.cwd()`, sniffs PNG, JPEG, GIF, or WebP from the magic bytes, and throws on anything else. Output is dropped if the call fails.
+- Each text item is truncated by the tool's own output limit.
 
-Snippets are plain JavaScript once the types are stripped, so ASI applies: a line starting with `(` or `[` continues the previous line. Terminate statements when the next one opens with a bracket.
-
-Calls are serialized: a queued call's timeout budget starts when it is queued, not when it begins running. The timeout covers queueing, compilation, connection setup, and execution, and firing it calls `worker.terminate()`, which kills synchronous loops and hung operations. The next call gets a new worker and a new connection.
+Calls are serialized: a queued call's timeout budget starts when it is queued, not when it begins running. The timeout covers queueing, module loading, connection setup, and execution, and firing it calls `worker.terminate()`, which kills synchronous loops and hung operations. The next call gets a new worker and a new connection.
 
 The worker holds one `Browser` across successful calls, but locals never cross calls. It connects lazily the first time `browser`, `tabs()`, or `page()` needs a connection.
 
-`resetBrowser(options)` closes the current connection, stores the `ConnectBrowserOptions`, and reconnects. The selection persists:
+`resetBrowser(options)` closes the current connection, stores the `connectBrowser` options, and reconnects. The selection persists:
 
-```ts
+```js
 await resetBrowser({ backend: "cdp", cdpPort: 9222 });
 await resetBrowser({ backend: "cdp", cdpUrl: "ws://127.0.0.1:9222/devtools/browser/..." });
 await resetBrowser({ backend: "extension" });

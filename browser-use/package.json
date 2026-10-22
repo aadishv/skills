@@ -1,5 +1,5 @@
 {
-  "name": "codex-browser-use-skill",
+  "name": "browser-use-skill",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,16 +17,12 @@
   "scripts": {
     "bridge": "node scripts/bridge.mjs",
     "check": "tsc --noEmit && node --check scripts/bridge.mjs && node --check extension/background.js && node --check extension/options.js",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "node --test tests/*.test.ts"
   },
   "dependencies": {
     "@mediabunny/server": "^1.51.0",
-    "acorn": "^8.17.0",
-    "esbuild": "^0.28.1",
     "fast-png": "^8.0.0",
-    "graphql": "^17.0.2",
     "mediabunny": "^1.51.0",
-    "tsx": "^4.20.6",
     "ws": "^8.18.3"
   },
   "peerDependencies": {
@@ -40,7 +36,7 @@
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "packageManager": "pnpm@10.20.0"
 }

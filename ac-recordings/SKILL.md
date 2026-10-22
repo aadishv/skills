@@ -6,29 +6,33 @@ disable-model-invocation: true
 
 # Adobe Connect recordings
 
-Requires the `codex-browser-use` skill to be set up (bridge running, extension paired) and `ffmpeg` on PATH. Read that skill first if you have not this session.
+Requires the `browser-use` skill (bridge running, extension paired) and `ffmpeg` on PATH. Read that skill first if you have not this session.
 
-## 1. Pick the tab
+`lib.ts` exports `isRecording(url)` and `fetchRecording(page)`. They take an attached SDK `Page` and never open their own connection, so call them from `execute_browser_code`.
 
-List tabs and find the recording. Recording tabs have URLs like `https://pcadobeconnect.stanford.edu/<id>/?session=...`.
+## 1. Pick the tab and fetch
 
-```bash
-pnpm --dir ~/.agents/skills/codex-browser-use exec tsx ~/.agents/skills/ac-recordings/scripts/tabs.mts
+```ts
+const { isRecording, fetchRecording } = await import("/Users/aadish/.agents/skills/ac-recordings/lib.ts")
+const recs = (await tabs()).filter((t) => isRecording(t.url))
+recs.length === 1 ? await fetchRecording(await page(recs[0].targetId)) : recs
 ```
 
-If there is exactly one such tab, use it. If there are zero or more than one, stop and ask the user which tab they mean (or ask them to open the recording). Never guess.
+Recording tabs have URLs like `https://pcadobeconnect.stanford.edu/<id>/?session=...`. If there is exactly one, use it. If there are zero or several, stop and ask the user which tab they mean (or ask them to open the recording). Never guess.
 
-## 2. Fetch
+`fetchRecording` returns `{ title, dir, transcript, video, videoUrl }`. The transcript is cached under `$TMPDIR/ac-recordings/<id>/`, so rerunning is cheap. `video` is the local mp4 path if it was already downloaded, otherwise null.
+
+Outside Pi, do the same from a script that gets the page from `connectBrowser()` and closes the browser in `finally`.
+
+## 2. Video (only when needed)
+
+Download the video only when the user asked for it or you need frames. Recordings are 300 to 500 MB, so run the download with bash (in tmux if it may exceed your timeout), not inside `execute_browser_code`:
 
 ```bash
-pnpm --dir ~/.agents/skills/codex-browser-use exec tsx ~/.agents/skills/ac-recordings/scripts/fetch.mts <targetId> [--video]
+curl -fsSL -o "$DIR/video.mp4.part" "$VIDEO_URL" && mv "$DIR/video.mp4.part" "$DIR/video.mp4"
 ```
 
-Prints JSON with `transcript` (Markdown path) and `video` (mp4 path or null). Files are cached under `$TMPDIR/ac-recordings/<id>/`; rerunning is cheap.
-
-Pass `--video` only when the user asked for the video or you need frames. Recordings are 300 to 500 MB and take a while. The mp4 URL is signed with an expiry; if the download fails, ask the user to reload the tab and rerun.
-
-Transcript-only fetches run in a second or two. Do that first for any question.
+`videoUrl` is signed with an expiry. If the download fails, ask the user to reload the tab, then call `fetchRecording` again for a fresh URL.
 
 ## 3. Answer questions
 
@@ -48,4 +52,4 @@ ffmpeg -loglevel error -y -ss HH:MM:SS -i "$VIDEO" -frames:v 1 /tmp/frame.png
 
 Estimate the timestamp from the start of the speaker's turn plus where the phrase falls within it. Grab a few frames a few seconds apart if the first one misses.
 
-To give the user the video itself, tell them the path printed by fetch, or copy it somewhere they asked for.
+To give the user the video itself, tell them the `video.mp4` path, or copy it somewhere they asked for.

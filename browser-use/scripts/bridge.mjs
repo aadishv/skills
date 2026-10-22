@@ -10,8 +10,8 @@ import { WebSocket, WebSocketServer } from "ws";
 if (process.platform !== "win32") process.umask(0o077);
 
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CONFIG_PATH = process.env.CODEX_BROWSER_CONFIG ?? resolve(SKILL_DIR, ".bridge.json");
-const RUNTIME_DIR = process.env.CODEX_BROWSER_RUNTIME ?? resolve(SKILL_DIR, ".runtime");
+const CONFIG_PATH = process.env.BROWSER_USE_CONFIG ?? resolve(SKILL_DIR, ".bridge.json");
+const RUNTIME_DIR = process.env.BROWSER_USE_RUNTIME ?? resolve(SKILL_DIR, ".runtime");
 const PID_PATH = resolve(RUNTIME_DIR, "bridge.pid");
 const LOG_PATH = resolve(RUNTIME_DIR, "bridge.log");
 const DEFAULT_PORT = 32123;

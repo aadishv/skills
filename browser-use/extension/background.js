@@ -1,7 +1,7 @@
 const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:32123";
 const PROTOCOL_VERSION = 1;
 const CDP_VERSION = "1.3";
-const RECONNECT_ALARM = "codex-browser-use-reconnect";
+const RECONNECT_ALARM = "browser-use-reconnect";
 const KEEPALIVE_MS = 20_000;
 
 let socket = null;
@@ -30,10 +30,10 @@ function setBadge(state) {
   chrome.action.setBadgeBackgroundColor({ color: connected ? "#188038" : "#b3261e" });
   chrome.action.setTitle({
     title: connected
-      ? "Codex Browser Use Bridge: connected"
+      ? "Browser Use Bridge: connected"
       : state === "error"
-        ? "Codex Browser Use Bridge: configuration or connection error"
-        : "Codex Browser Use Bridge: disconnected",
+        ? "Browser Use Bridge: configuration or connection error"
+        : "Browser Use Bridge: disconnected",
   });
 }
 
@@ -157,7 +157,7 @@ async function dispatchCdp(method, params, sessionId) {
       return {
         protocolVersion: CDP_VERSION,
         product: `Chrome/${navigator.userAgent.match(/Chrome\/([^ ]+)/)?.[1] ?? "unknown"}`,
-        revision: "@codex-browser-use-extension",
+        revision: "@browser-use-extension",
         userAgent: navigator.userAgent,
         jsVersion: "unknown",
       };
