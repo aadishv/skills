@@ -6,23 +6,27 @@ disable-model-invocation: true
 
 # Adobe Connect recordings
 
-Requires the `browser-use` skill (bridge running, extension paired) and `ffmpeg` on PATH. Read that skill first if you have not this session.
+Requires the `browser-use` skill and `ffmpeg` on PATH. Read that skill first if you have not this session. The recording is behind the user's login, so this always uses the user browser.
 
-`lib.ts` exports `isRecording(url)` and `fetchRecording(page)`. They take an attached SDK `Page` and never open their own connection, so call them from `execute_browser_code`.
+`lib.ts` exports `isRecording(url)` and `fetchRecording(page)`. They take an attached SDK `Page` and never open their own connection.
 
 ## 1. Pick the tab and fetch
 
+Run this with `execute_browser_code` (timeout 30):
+
 ```ts
-const { isRecording, fetchRecording } = await import("/Users/aadish/.agents/skills/ac-recordings/lib.ts")
-const recs = (await tabs()).filter((t) => isRecording(t.url))
-recs.length === 1 ? await fetchRecording(await page(recs[0].targetId)) : recs
+import { connectBrowser } from "pi-browser-use"
+import { isRecording, fetchRecording } from "/Users/aadish/.agents/skills/ac-recordings/lib.ts"
+const browser = await connectBrowser({ browser: "user" })
+const recs = (await browser.tabs()).filter((t) => isRecording(t.url))
+console.log(recs.length === 1 ? await fetchRecording(await browser.page(recs[0].targetId)) : recs)
 ```
 
 Recording tabs have URLs like `https://pcadobeconnect.stanford.edu/<id>/?session=...`. If there is exactly one, use it. If there are zero or several, stop and ask the user which tab they mean (or ask them to open the recording). Never guess.
 
 `fetchRecording` returns `{ title, dir, transcript, video, videoUrl }`. The transcript is cached under `$TMPDIR/ac-recordings/<id>/`, so rerunning is cheap. `video` is the local mp4 path if it was already downloaded, otherwise null.
 
-Outside Pi, do the same from a script that gets the page from `connectBrowser()` and closes the browser in `finally`.
+From a standalone `node` script, do the same but close the browser in `finally`.
 
 ## 2. Video (only when needed)
 

@@ -3,8 +3,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-type Page = { evaluate(expression: string): Promise<unknown> };
+import type { Page } from "pi-browser-use";
 
 export function isRecording(url: string): boolean {
   return /adobeconnect\.[^/]+\/[^/]+\/\?session=/.test(url);
@@ -12,16 +11,16 @@ export function isRecording(url: string): boolean {
 
 /** Saves the transcript under $TMPDIR/ac-recordings/<id>/ and returns the paths plus the signed mp4 URL. */
 export async function fetchRecording(page: Page) {
-  const info = (await page.evaluate(`(() => {
+  const info = await page.evaluate<{ title: string; url: string; video: string; vtt: string }>(() => {
     const v = document.querySelector("video");
-    const t = v && v.querySelector("track");
+    const t = v?.querySelector("track");
     return {
       title: document.title,
       url: location.href,
       video: v ? v.currentSrc || v.src : "",
       vtt: t ? t.src : "",
     };
-  })()`)) as { title: string; url: string; video: string; vtt: string };
+  });
   if (!info.video || !info.vtt) {
     throw new Error(`No <video>/<track> on ${info.url}. Is this a recording page, and has it finished loading?`);
   }
@@ -33,7 +32,7 @@ export async function fetchRecording(page: Page) {
   const transcript = join(dir, "transcript.md");
   if (!existsSync(transcript)) {
     // The VTT is behind the login cookie, so fetch it from inside the page.
-    const vtt = (await page.evaluate(`fetch(${JSON.stringify(info.vtt)}).then(r => r.text())`)) as string;
+    const vtt = await page.evaluate<string>((src: string) => fetch(src).then((r) => r.text()), info.vtt);
     if (!vtt.startsWith("WEBVTT")) throw new Error("Transcript fetch did not return WEBVTT; the user may be logged out.");
     writeFileSync(join(dir, "transcript.vtt"), vtt);
     writeFileSync(transcript, `# ${info.title}\n\n${vttToMarkdown(vtt)}`);

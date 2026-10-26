@@ -1,6 +1,6 @@
 ---
 name: dumb-design
-description: Use to generate minimal, functional UIs for throwaway projects, data visualization interfaces, etc., when the user doesn't care about UI quality. Ask the user if you're not sure whether to use this skill or the frontend-design skill.
+description: Use to generate minimal, functional UIs for throwaway projects, data visualization interfaces, etc., when the user doesn't care about UI quality.
 ---
 
 # Dumb design
