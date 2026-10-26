@@ -3,9 +3,14 @@ name: dumb-design
 description: Use to generate minimal, functional UIs for throwaway projects, data visualization interfaces, etc., when the user doesn't care about UI quality. Ask the user if you're not sure whether to use this skill or the frontend-design skill.
 ---
 
-# Dumb design guidelines
+# Dumb design
 
-1. Avoid bringing in new fonts. This is a recipe for design disaster. Use `sans-serif` or `-apple-system`, or in the case when it makes sense to use serif, `serif` or `Charter, serif`. If the user explicitly requests a font, you can use it, but otherwise, stick to these basic system fonts.
-2. Keep the design refreshingly minimal. Use browser layout defaults as much as possible. Think 2000s-era Google SSO page. You probably don't need unnecessary cards or background colors or fancy buttons or borders; you probably just need a <table> and a few decently minimally styled flat <button>s.
-3. Take advantage of HTML and CSS; don't use Tailwind unless the codebase prescribes it. Use React etc. if the codebase prescribes it or if the site is sufficiently interactive. In most cases, you should be able to get away with a `<script type="module" src="./index.ts"></script>` or similar (relative paths work, as do TSX files). Put the HTML and its entry files in a project directory, then run `pnpm dlx vite /path/to/project` to serve the page and handle TypeScript(X) compilation and bundling.
-4. In dumb design, layout is everything. Even if you're using the most boring fonts and the most boring design system, how you position elements on the page makes a huge difference in UX. 
+Immediately exit if I'm asking you to work or create something in a project that has its own style system. Making separated artifacts or reports etc. for a project doesn't count.
+
+First, copy `assets/base.css` into the project and link it before any other CSS. It's basic styling that aligns with my preferences for raw HTML elements, with light/dark mode support and zero-specificity selectors. Of course, this means you need to use semantic HTML as much as possible.
+
+Your own CSS should ideally be layout only, letting my CSS handle the styling as much as posible. For monochrome UI colors, you can use the variables from base.css.
+
+Layout is everything. With a fixed design system, how you position things on the page is what makes the UX good or bad.
+
+Use plain HTML and CSS, not Tailwind or React, unless the codebase uses them or the page is very interactive. Usually a `<script type="module" src="./index.ts"></script>` is enough (relative paths and TSX work). Put the HTML, `base.css`, and entry files in a project directory and serve it with `pnpm dlx vite /path/to/project`.
